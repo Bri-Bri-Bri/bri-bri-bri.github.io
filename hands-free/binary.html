@@ -170,7 +170,10 @@
 
       if (mode === 'dec2bin') {
         correctAnswer = current.binary;
-        correct = (ans === current.binary);
+        // Accept answer with or without leading zeros:
+        // "11" and "0011" are both correct for decimal 3 in 4-bit mode
+        const ansVal = parseInt(ans, 2);
+        correct = (!isNaN(ansVal) && ansVal === current.decimal && /^[01]+$/.test(ans));
       } else {
         // Accept decimal number
         const parsed = parseInt(ans, 10);

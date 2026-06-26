@@ -95,20 +95,46 @@
     if (onProgress) _progressCbs.push(onProgress);
     if (_pipe) { if (onProgress) onProgress({ status: 'ready' }); return Promise.resolve(_pipe); }
     if (_pipePromise) return _pipePromise;
+
+    // Suppress ONNX Runtime "Removing initializer" spam during model load.
+    // These are benign graph-cleanup messages emitted by onnxruntime-web.
+    var _origWarn = console.warn;
+    var _warnSeen = {};
+    console.warn = function () {
+      var msg = String(arguments[0] || '');
+      if (msg.indexOf('Removing initializer') !== -1) {
+        // Log each unique initializer name once, then suppress repeats
+        var key = msg.slice(0, 80);
+        if (!_warnSeen[key]) { _warnSeen[key] = true; _origWarn('[HF] (suppressing ONNX duplicates) ' + key); }
+        return;
+      }
+      _origWarn.apply(console, arguments);
+    };
+
     _pipePromise = import(TRANSFORMERS_URL)
       .then(function (mod) {
-        mod.env.useBrowserCache  = true;
         mod.env.allowLocalModels = false;
+        // Cache API requires a secure context; falls back gracefully on plain HTTP dev servers.
+        try {
+          mod.env.useBrowserCache = true;
+        } catch (_) {
+          mod.env.useBrowserCache = false;
+        }
         return mod.pipeline('automatic-speech-recognition', MODEL_ID, {
           quantized: true,
           progress_callback: _notifyProgress,
         });
       })
       .then(function (pipe) {
+        console.warn = _origWarn; // restore after load
         _pipe = pipe;
         HF.WHISPER_READY = true;
         _notifyProgress({ status: 'ready' });
         return pipe;
+      })
+      .catch(function (err) {
+        console.warn = _origWarn; // always restore
+        throw err;
       });
     return _pipePromise;
   }
@@ -146,11 +172,27 @@
     source.connect(analyser);
     const dataArray = new Float32Array(analyser.fftSize);
 
-    // MediaRecorder — collects audio in 100 ms slices while VAD runs
+    // MediaRecorder — collects audio in 100 ms slices while VAD runs.
+    // We keep a small rolling pre-buffer of chunks recorded BEFORE speech
+    // is detected, so we don't cut off the first phoneme. Once speech
+    // starts we accumulate speech-only chunks. This means Whisper only
+    // receives the utterance itself, not all the silence before it.
+    const PRE_BUFFER_CHUNKS = 3; // 3 × 100 ms = 300 ms look-ahead
     const mimeType = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4']
       .find(function (t) { return MediaRecorder.isTypeSupported(t); }) || '';
     const mr = new MediaRecorder(stream, mimeType ? { mimeType } : {});
-    mr.ondataavailable = function (ev) { if (ev.data.size > 0 && active) chunks.push(ev.data); };
+    let preBuffer      = [];  // rolling window before speech starts
+    let speechChunks   = [];  // chunks from speech onset onward
+    let recordingSpeech = false;
+    mr.ondataavailable = function (ev) {
+      if (!ev.data.size || !active) return;
+      if (recordingSpeech) {
+        speechChunks.push(ev.data);
+      } else {
+        preBuffer.push(ev.data);
+        if (preBuffer.length > PRE_BUFFER_CHUNKS) preBuffer.shift();
+      }
+    };
     mr.start(100);
 
     onStatus('listening');
@@ -161,20 +203,33 @@
       try { source.disconnect(); } catch (_) {}
       try { audioCtx.close();    } catch (_) {}
 
-      if (!shouldTranscribe || !chunks.length) {
+      const allChunks = preBuffer.concat(speechChunks);
+      if (!shouldTranscribe || !allChunks.length) {
         try { mr.stop(); } catch (_) {}
         onResult(null);
         return;
       }
 
       onStatus('thinking');
+      const capturedChunks = preBuffer.concat(speechChunks);
       mr.onstop = function () {
-        const blob = new Blob(chunks, { type: mr.mimeType || 'audio/webm' });
+        const blob = new Blob(capturedChunks, { type: mr.mimeType || 'audio/webm' });
         const url  = URL.createObjectURL(blob);
         loadModel()
-          .then(function (pipe) { return pipe(url, { language: 'english', task: 'transcribe' }); })
-          .then(function (result) { URL.revokeObjectURL(url); onResult((result.text || '').trim()); })
-          .catch(function (err)  { console.error('[HF]', err); URL.revokeObjectURL(url); onResult(null); });
+          .then(function (pipe) {
+            return pipe(url, {
+              language: 'english',
+              task: 'transcribe',
+              return_timestamps: false,  // skip timestamp decode — faster
+            });
+          })
+          .then(function (result) {
+            URL.revokeObjectURL(url);
+            const transcript = (result.text || '').trim();
+            console.log('[HF] transcript:', JSON.stringify(transcript));
+            onResult(transcript);
+          })
+          .catch(function (err)  { console.error('[HF] transcription error:', err); URL.revokeObjectURL(url); onResult(null); });
       };
       try { mr.stop(); } catch (_) { onResult(null); }
     }
@@ -190,7 +245,12 @@
       const now = Date.now();
 
       if (rms > VAD_THRESHOLD) {
-        if (!isSpeaking) { isSpeaking = true; speechStart = now; onStatus('speaking'); }
+        if (!isSpeaking) {
+          isSpeaking = true;
+          speechStart = now;
+          recordingSpeech = true; // switch MediaRecorder from pre-buffer to speech capture
+          onStatus('speaking');
+        }
         silenceStart = null;
       } else if (isSpeaking) {
         if (!silenceStart) silenceStart = now;
@@ -449,125 +509,5 @@
       },
     };
   };
-
-}());
-/*
- *
- * Speech recognition runs entirely in the browser via Whisper (no audio
- * sent to any server). The model (~40 MB quantized) is downloaded once on
- * first mic use and cached in the browser's Cache Storage indefinitely.
- *
- * UX: push-to-talk — hold 🎤 while speaking, release to transcribe (~1–2 s).
- *
- * Exposes the same HF global API as before:
- *   HF.speak(text, opts)
- *   HF.speakThen(text, cb, opts)
- *   HF.cancelSpeech()
- *   HF.VOICE_SUPPORTED        — true when MediaRecorder is available
- *   HF.WHISPER_READY          — true once the model is loaded
- *   HF.audioMode              — controls TTS read-aloud of questions
- *   HF.setAudioMode(bool)
- *   HF.cancelRecognition()
- *   HF.renderAudioToggle(container)
- *   HF.createInputUI(el, cb, opts)
- *   HF.GameState()
- */
-(function () {
-  'use strict';
-
-  const HF = window.HF = window.HF || {};
-
-  // ── Text-to-Speech ──────────────────────────────────────────────────────
-
-  HF.speak = function (text, opts) {
-    if (!window.speechSynthesis) return null;
-    window.speechSynthesis.cancel();
-    const utt = new SpeechSynthesisUtterance(text);
-    if (opts) {
-      if (opts.rate   !== undefined) utt.rate   = opts.rate;
-      if (opts.pitch  !== undefined) utt.pitch  = opts.pitch;
-      if (opts.volume !== undefined) utt.volume = opts.volume;
-    }
-    window.speechSynthesis.speak(utt);
-    return utt;
-  };
-
-  HF.cancelSpeech = function () {
-    if (window.speechSynthesis) window.speechSynthesis.cancel();
-  };
-
-  HF.speakThen = function (text, cb, opts) {
-    if (!window.speechSynthesis) { if (cb) setTimeout(cb, 50); return null; }
-    window.speechSynthesis.cancel();
-    const utt = new SpeechSynthesisUtterance(text);
-    if (opts) {
-      if (opts.rate   !== undefined) utt.rate   = opts.rate;
-      if (opts.pitch  !== undefined) utt.pitch  = opts.pitch;
-      if (opts.volume !== undefined) utt.volume = opts.volume;
-    }
-    if (cb) {
-      let fired = false;
-      const once = function () { if (!fired) { fired = true; cb(); } };
-      utt.onend = utt.onerror = once;
-      setTimeout(once, Math.max(1200, Math.round(text.length / 5 / 150 * 60000) + 800));
-    }
-    window.speechSynthesis.speak(utt);
-    return utt;
-  };
-
-  // ── Whisper config ──────────────────────────────────────────────────────
-
-  // @xenova/transformers v2 — stable, well-tested CDN build
-  const TRANSFORMERS_URL = 'https://cdn.jsdelivr.net/npm/@xenova/transformers@2.17.2';
-  // Quantized whisper-tiny English-only: ~40 MB, cached after first download
-  const MODEL_ID = 'Xenova/whisper-tiny.en';
-
-  HF.VOICE_SUPPORTED = !!(navigator.mediaDevices && window.MediaRecorder);
-  HF.WHISPER_READY   = false;
-  HF.audioMode       = localStorage.getItem('hf_audiomode') !== 'off';
-
-  HF.setAudioMode = function (val) {
-    HF.audioMode = !!val;
-    localStorage.setItem('hf_audiomode', val ? 'on' : 'off');
-  };
-
-  // ── Model loading ───────────────────────────────────────────────────────
-  // Shared across all game pages in a session: model is only ever fetched
-  // once per browser session (and cached on disk after first download).
-
-  let _pipe        = null;
-  let _pipePromise = null;
-  let _progressCbs = [];
-
-  function _notifyProgress(p) {
-    _progressCbs.forEach(function (cb) { try { cb(p); } catch (_) {} });
-  }
-
-  function loadModel(onProgress) {
-    if (onProgress) _progressCbs.push(onProgress);
-    if (_pipe) {
-      if (onProgress) onProgress({ status: 'ready' });
-      return Promise.resolve(_pipe);
-    }
-    if (_pipePromise) return _pipePromise;
-
-    _pipePromise = import(TRANSFORMERS_URL)
-      .then(function (mod) {
-        mod.env.useBrowserCache  = true;   // cache weights in browser Cache Storage
-        mod.env.allowLocalModels = false;
-        return mod.pipeline('automatic-speech-recognition', MODEL_ID, {
-          quantized: true,
-          progress_callback: _notifyProgress,
-        });
-      })
-      .then(function (pipe) {
-        _pipe = pipe;
-        HF.WHISPER_READY = true;
-        _notifyProgress({ status: 'ready' });
-        return pipe;
-      });
-
-    return _pipePromise;
-  }
 
 }());
