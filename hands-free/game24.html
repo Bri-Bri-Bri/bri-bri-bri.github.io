@@ -1,0 +1,342 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Game of 24 – Hands-Free Games</title>
+  <link rel="stylesheet" href="css/style.css">
+  <script src="../shared/navbar.js"></script>
+  <style>
+    .cards-row {
+      display: flex;
+      justify-content: center;
+      gap: 0.75rem;
+      margin: 0.5rem 0;
+      flex-wrap: wrap;
+    }
+    .play-card {
+      width: 3.5rem;
+      height: 4.5rem;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border: 2px solid var(--border);
+      border-radius: 0.5rem;
+      font-size: 1.6rem;
+      font-weight: 700;
+      background: var(--surface);
+      box-shadow: var(--shadow);
+    }
+    .hint-text {
+      font-size: 0.8rem;
+      color: var(--muted);
+      text-align: center;
+    }
+    .expr-help {
+      font-size: 0.8rem;
+      color: var(--muted);
+      text-align: center;
+      padding: 0 0.5rem;
+    }
+  </style>
+</head>
+<body class="page">
+
+  <header class="site-header">
+    <a class="back-link" href="index.html" aria-label="Back to games">←</a>
+    <h1>Game of 24</h1>
+  </header>
+
+  <main class="main">
+
+    <!-- Settings -->
+    <div class="card">
+      <div class="settings-row">
+        <label>Cards:</label>
+        <div class="chip-group" id="deck-chips">
+          <button class="chip active" data-deck="1-13">1–13</button>
+          <button class="chip"        data-deck="1-10">1–10</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Score -->
+    <div class="score-bar">
+      <span>Score <strong id="score">0</strong></span>
+      <span>Streak <strong id="streak">0</strong></span>
+      <span>Accuracy <strong id="accuracy">—</strong></span>
+    </div>
+
+    <!-- Question: four cards -->
+    <div class="card question-card">
+      <p class="question-label">Make 24 using all four numbers</p>
+      <div class="cards-row" id="cards-row" aria-live="polite"></div>
+      <p class="hint-text">Use + − × ÷ and parentheses. Each number exactly once.</p>
+    </div>
+
+    <!-- Input -->
+    <div class="card">
+      <p class="expr-help">
+        Speak or type a math expression, e.g. <em>(3 + 5) × (1 + 2)</em>.
+        Use * for × and / for ÷.
+      </p>
+      <div class="input-area" id="input-area" style="margin-top:0.75rem"></div>
+    </div>
+
+    <!-- Feedback -->
+    <div class="feedback" id="feedback" aria-live="assertive"></div>
+
+    <!-- Actions -->
+    <div style="display:flex;gap:0.75rem;justify-content:center" id="actions-row">
+      <button class="btn btn-ghost hidden" id="hint-btn">Show a solution</button>
+      <button class="btn btn-ghost hidden" id="next-btn">Skip</button>
+    </div>
+    <div class="hidden text-center" id="hint-display" style="font-size:1.05rem;font-weight:600;"></div>
+
+  </main>
+
+  <script src="js/speech.js"></script>
+  <script>
+    'use strict';
+
+    // ── Expression evaluator ───────────────────────────────────────────────
+    //
+    // Safely evaluate an arithmetic expression string that contains only
+    // digits, spaces, and the operators +-*/^() (no code injection risk
+    // since we validate the character set before calling Function()).
+
+    function safeEval(expr) {
+      // Normalise spoken words to symbols
+      const normalised = expr
+        .replace(/\btimes\b/gi, '*')
+        .replace(/\bmultiplied by\b/gi, '*')
+        .replace(/\bdivided by\b/gi, '/')
+        .replace(/\bplus\b/gi,  '+')
+        .replace(/\bminus\b/gi, '-')
+        .replace(/×/g, '*')
+        .replace(/÷/g, '/');
+
+      // Whitelist: digits, operators, parens, spaces, decimal point
+      if (!/^[\d\s+\-*/().]+$/.test(normalised)) return NaN;
+
+      try {
+        // eslint-disable-next-line no-new-func
+        const result = Function('"use strict"; return (' + normalised + ')')();
+        return typeof result === 'number' ? result : NaN;
+      } catch (_) {
+        return NaN;
+      }
+    }
+
+    // ── Extract all numbers used in an expression ──────────────────────────
+    function extractNumbers(expr) {
+      const nums = [];
+      const matches = expr.match(/\d+(\.\d+)?/g) || [];
+      matches.forEach(function (m) { nums.push(parseFloat(m)); });
+      return nums.sort(function (a, b) { return a - b; });
+    }
+
+    // ── Solver: brute-force all possible 24 solutions ──────────────────────
+    //
+    // Generates all permutations of the four numbers and all combinations
+    // of three operators (+,-,*,/) and all parenthesisation patterns.
+    // Returns an expression string or null if unsolvable.
+
+    const OPS = ['+', '-', '*', '/'];
+
+    function applyOp(a, b, op) {
+      switch (op) {
+        case '+': return a + b;
+        case '-': return a - b;
+        case '*': return a * b;
+        case '/': return b === 0 ? NaN : a / b;
+      }
+    }
+
+    function permutations(arr) {
+      if (arr.length <= 1) return [arr.slice()];
+      const result = [];
+      arr.forEach(function (val, i) {
+        const rest = arr.slice(0, i).concat(arr.slice(i + 1));
+        permutations(rest).forEach(function (perm) {
+          result.push([val].concat(perm));
+        });
+      });
+      return result;
+    }
+
+    function solve24(nums) {
+      const perms = permutations(nums);
+      for (let pi = 0; pi < perms.length; pi++) {
+        const [a, b, c, d] = perms[pi];
+        for (const op1 of OPS) {
+          for (const op2 of OPS) {
+            for (const op3 of OPS) {
+              // 5 distinct parenthesisation shapes for 4 numbers
+              const candidates = [
+                // ((a op1 b) op2 c) op3 d
+                [applyOp(applyOp(applyOp(a,b,op1),c,op2),d,op3),
+                 `((${a}${op1}${b})${op2}${c})${op3}${d}`],
+                // (a op1 (b op2 c)) op3 d
+                [applyOp(applyOp(a,applyOp(b,c,op2),op1),d,op3),
+                 `(${a}${op1}(${b}${op2}${c}))${op3}${d}`],
+                // (a op1 b) op2 (c op3 d)
+                [applyOp(applyOp(a,b,op1),applyOp(c,d,op3),op2),
+                 `(${a}${op1}${b})${op2}(${c}${op3}${d})`],
+                // a op1 ((b op2 c) op3 d)
+                [applyOp(a,applyOp(applyOp(b,c,op2),d,op3),op1),
+                 `${a}${op1}((${b}${op2}${c})${op3}${d})`],
+                // a op1 (b op2 (c op3 d))
+                [applyOp(a,applyOp(b,applyOp(c,d,op3),op2),op1),
+                 `${a}${op1}(${b}${op2}(${c}${op3}${d}))`],
+              ];
+              for (const [val, expr] of candidates) {
+                if (Math.abs(val - 24) < 1e-9) return expr;
+              }
+            }
+          }
+        }
+      }
+      return null;
+    }
+
+    // ── State ──────────────────────────────────────────────────────────────
+    let maxCard = 13;
+    let current = null;   // { nums: number[], solution: string|null }
+    let autoTimer = null;
+    const gs    = HF.GameState();
+
+    // ── DOM refs ───────────────────────────────────────────────────────────
+    const cardsRow  = document.getElementById('cards-row');
+    const inputArea = document.getElementById('input-area');
+    const feedback  = document.getElementById('feedback');
+    const nextBtn   = document.getElementById('next-btn');
+    const hintBtn   = document.getElementById('hint-btn');
+    const hintDisp  = document.getElementById('hint-display');
+    const scoreEl   = document.getElementById('score');
+    const streakEl  = document.getElementById('streak');
+    const accEl     = document.getElementById('accuracy');
+
+    // ── Settings ───────────────────────────────────────────────────────────
+    document.getElementById('deck-chips').addEventListener('click', function (e) {
+      const btn = e.target.closest('.chip');
+      if (!btn) return;
+      document.querySelectorAll('#deck-chips .chip').forEach(c => c.classList.remove('active'));
+      btn.classList.add('active');
+      maxCard = btn.dataset.deck === '1-10' ? 10 : 13;
+      newPuzzle();
+    });
+
+    nextBtn.addEventListener('click', function () {
+      if (autoTimer) { clearTimeout(autoTimer); autoTimer = null; }
+      newPuzzle();
+    });
+    hintBtn.addEventListener('click', function () {
+      if (!current || !current.solution) return;
+      hintDisp.textContent = 'Solution: ' + current.solution;
+      hintDisp.classList.remove('hidden');
+      HF.speak('One solution is: ' + current.solution);
+    });
+
+    // ── Game logic ─────────────────────────────────────────────────────────
+    function randInt(min, max) {
+      return Math.floor(Math.random() * (max - min + 1)) + min;
+    }
+
+    function newPuzzle() {
+      if (autoTimer) { clearTimeout(autoTimer); autoTimer = null; }
+      HF.cancelRecognition();
+      feedback.className = 'feedback';
+      feedback.textContent = '';
+      nextBtn.classList.add('hidden');
+      hintBtn.classList.add('hidden');
+      hintDisp.classList.add('hidden');
+      hintDisp.textContent = '';
+
+      // Keep generating until we get a solvable puzzle
+      let nums, solution;
+      let attempts = 0;
+      do {
+        nums = [randInt(1, maxCard), randInt(1, maxCard),
+                randInt(1, maxCard), randInt(1, maxCard)];
+        solution = solve24(nums);
+        attempts++;
+      } while (!solution && attempts < 50);
+
+      current = { nums, solution };
+
+      // Render cards
+      cardsRow.innerHTML = '';
+      nums.forEach(function (n) {
+        const card = document.createElement('div');
+        card.className = 'play-card';
+        card.textContent = n;
+        cardsRow.appendChild(card);
+      });
+
+      inputArea.innerHTML = '';
+      const ui = HF.createInputUI(inputArea, checkAnswer, {
+        placeholder: 'e.g. (3+5)*(1+2)',
+        inputmode: 'text',
+      });
+      HF.speakThen('Make 24 with ' + nums.join(', '), function () {
+        ui.startListening();
+        if (!HF.audioMode) setTimeout(function () { ui.focus(); }, 50);
+      });
+    }
+
+    function checkAnswer(raw) {
+      if (!current) return;
+
+      const val = safeEval(raw);
+
+      if (isNaN(val)) {
+        showFeedback(false, 'Couldn\'t parse "' + raw + '" — try e.g. (3+1)*6');
+        HF.speak('I couldn\'t parse that expression.');
+        return;
+      }
+
+      // Check the expression uses exactly the right numbers
+      const used   = extractNumbers(raw).map(Math.round).sort(function (a, b) { return a - b; });
+      const expect = current.nums.slice().sort(function (a, b) { return a - b; });
+      const sameNums = used.length === 4 &&
+        used.every(function (v, i) { return v === expect[i]; });
+
+      if (!sameNums) {
+        showFeedback(false, 'Use all four numbers exactly once.');
+        HF.speak('You must use all four numbers exactly once.');
+        return;
+      }
+
+      if (Math.abs(val - 24) < 1e-9) {
+        gs.correct();
+        showFeedback(true, raw + ' = 24');
+        HF.speak('Correct!');
+        updateScore();
+        autoTimer = setTimeout(newPuzzle, 2000);
+        nextBtn.classList.remove('hidden');
+      } else {
+        gs.wrong();
+        showFeedback(false, raw + ' = ' + parseFloat(val.toFixed(4)) + ', not 24. Try again.');
+        HF.speak('That equals ' + parseFloat(val.toFixed(2)) + ', not 24. Try again.');
+        hintBtn.classList.remove('hidden');
+        nextBtn.classList.remove('hidden');
+        updateScore();
+      }
+    }
+
+    function showFeedback(ok, msg) {
+      feedback.textContent = msg;
+      feedback.className   = 'feedback ' + (ok ? 'correct' : 'wrong');
+    }
+
+    function updateScore() {
+      scoreEl.textContent  = gs.score;
+      streakEl.textContent = gs.streak;
+      accEl.textContent    = gs.total ? gs.accuracy() + '%' : '—';
+    }
+
+    // ── Boot ───────────────────────────────────────────────────────────────    HF.renderAudioToggle(document.querySelector('.site-header'));    newPuzzle();
+  </script>
+</body>
+</html>

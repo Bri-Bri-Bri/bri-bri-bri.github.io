@@ -1,0 +1,116 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" media="(prefers-color-scheme: light)" content="#dc3c37">
+  <meta name="theme-color" media="(prefers-color-scheme: dark)"  content="#1a1a1a">
+  <link rel="manifest" href="manifest.json">
+  <link rel="apple-touch-icon" href="icon-192.png">
+  <title>Pomodoro</title>
+  <link rel="stylesheet" href="pomodoro.css">
+  <script src="../shared/navbar.js"></script>
+</head>
+<body>
+
+  <!-- Sidebar: Task Lists -->
+  <aside id="sidebar" class="hidden">
+    <h2>Task Lists</h2>
+
+    <div class="save-row">
+      <input id="listNameInput" type="text" placeholder="List name…">
+      <button id="saveListBtn">Save tasks</button>
+    </div>
+
+    <div id="savedLists" style="margin-top:.5rem"></div>
+
+    <button class="load-btn" id="loadSelectedBtn">▶ Load selected into session</button>
+
+    <div class="io-row">
+      <button id="exportBtn">⬇ Export JSON</button>
+      <button id="importBtn">⬆ Import JSON</button>
+      <input id="importFile" type="file" accept=".json" style="display:none">
+    </div>
+  </aside>
+
+  <!-- Main area -->
+  <div id="main">
+
+    <div id="topbar">
+      <button id="sidebarToggle" class="icon-btn" title="Toggle task lists">☰</button>
+      <h1>Pomodoro</h1>
+    </div>
+
+    <!-- Setup view -->
+    <div id="setupView">
+      <label>Tasks <span style="font-weight:400;color:#aaa">(drag ⠿ to reorder · use [text](url) for links)</span></label>
+      <div id="taskContainer"></div>
+      <button id="addTaskBtn" type="button">+ Add task</button>
+
+      <div class="row">
+        <div><label>Focus (min)</label><input id="focusM" type="number" value="25" min="1"></div>
+        <div><label>Short break (min)</label><input id="shortM" type="number" value="5" min="1"></div>
+        <div><label>Long break (min)</label><input id="longM" type="number" value="15" min="1"></div>
+      </div>
+
+      <div class="row">
+        <div><label>Long break every N cycles</label><input id="longEvery" type="number" value="4" min="1"></div>
+        <div>
+          <label>Music on break</label>
+          <select id="musicMode">
+            <option value="none">None</option>
+            <option value="file">Local audio file</option>
+          </select>
+        </div>
+      </div>
+
+      <div id="fileRow" style="display:none">
+        <label>Audio file (mp3, wav…)</label>
+        <input id="audioFile" type="file" accept="audio/*">
+        <label>Music volume</label>
+        <input id="musicVol" type="range" min="0" max="1" step="0.01" value="0.5">
+      </div>
+
+      <label>Voice</label>
+      <select id="voiceSelect"></select>
+      <label>Voice volume</label>
+      <input id="vol" type="range" min="0" max="1" step="0.01" value="1">
+
+      <div class="setup-actions">
+        <button id="startBtn">▶ Start</button>
+        <button id="resetBtn">↺ Reset</button>
+      </div>
+    </div>
+
+    <!-- Study view -->
+    <div id="studyView">
+      <div class="study-phase" id="studyPhase">Focus</div>
+      <div class="big-timer" id="studyTimer">00:00</div>
+      <div class="study-task" id="studyTask"></div>
+      <div class="study-cycle" id="studyCycle"></div>
+
+      <div class="study-controls">
+        <button id="pauseBtn">Pause</button>
+        <button id="skipBtn">Skip</button>
+        <button id="exitStudyBtn">← Setup</button>
+      </div>
+
+      <div id="studyMusicBox" style="display:none">
+        <label>♪ Music volume</label>
+        <input id="studyMusicVol" type="range" min="0" max="1" step="0.01" value="0.5">
+      </div>
+    </div>
+
+  </div>
+
+<script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.6/Sortable.min.js"></script>
+<script src="pomodoro.js"></script>
+<script>
+  if ('serviceWorker' in navigator) {
+    window.addEventListener('load', () => {
+      navigator.serviceWorker.register('./sw.js').catch(() => {});
+    });
+  }
+</script>
+</body>
+</html>

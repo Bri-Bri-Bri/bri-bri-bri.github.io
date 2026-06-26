@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Hands-Free Games</title>
+  <link rel="stylesheet" href="css/style.css">
+  <script src="../shared/navbar.js"></script>
+  <style>
+    .hero {
+      padding: 2rem 0 0.5rem;
+      text-align: center;
+    }
+    .hero h2 {
+      font-size: 1.5rem;
+      font-weight: 700;
+    }
+    .hero p {
+      color: var(--muted);
+      font-size: 0.9rem;
+      margin-top: 0.35rem;
+    }
+    .voice-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.35rem;
+      padding: 0.3rem 0.75rem;
+      border-radius: 9999px;
+      font-size: 0.8rem;
+      font-weight: 500;
+      margin-top: 0.75rem;
+    }
+    .voice-badge.on  { background: var(--success-bg); color: var(--success); }
+    .voice-badge.off { background: var(--error-bg);   color: var(--error); }
+  </style>
+</head>
+<body class="page">
+
+  <header class="site-header">
+    <h1>Hands-Free Games</h1>
+  </header>
+
+  <main class="main">
+
+    <section class="hero">
+      <h2>Choose a game</h2>
+      <p>Answer questions by speaking or typing.</p>
+      <div id="voice-status"></div>
+    </section>
+
+    <nav class="game-grid" aria-label="Games">
+      <a class="game-card" href="binary.html">
+        <span class="game-name">Binary</span>
+        <span class="game-desc">Convert numbers to &amp; from binary</span>
+      </a>
+      <a class="game-card" href="doomsday.html">
+        <span class="game-name">Doomsday</span>
+        <span class="game-desc">Find the day of the week for any date</span>
+      </a>
+      <a class="game-card" href="game24.html">
+        <span class="game-name">Game of 24</span>
+        <span class="game-desc">Make 24 from four numbers</span>
+      </a>
+      <a class="game-card" href="pao.html">
+        <span class="game-name">PAO Quiz</span>
+        <span class="game-desc">Quiz your Person–Action–Object system</span>
+      </a>
+    </nav>
+
+    <p class="text-muted text-center">
+      Works best in Chrome / Edge. Firefox: type answers instead of speaking.
+    </p>
+
+  </main>
+
+  <script src="js/speech.js"></script>
+  <script>
+    const badge = document.getElementById('voice-status');
+    if (HF.VOICE_SUPPORTED) {
+      badge.innerHTML =
+        '<span class="voice-badge on">Voice input available</span>';
+    } else {
+      badge.innerHTML =
+        '<span class="voice-badge off">Text input only (voice not supported)</span>';
+    }
+  </script>
+</body>
+</html>

@@ -1,0 +1,645 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>PAO Quiz – Hands-Free Games</title>
+  <link rel="stylesheet" href="css/style.css">
+  <script src="../shared/navbar.js"></script>
+  <style>
+    .pao-number {
+      font-size: clamp(3rem, 15vw, 5rem);
+      font-weight: 700;
+      font-variant-numeric: tabular-nums;
+      line-height: 1;
+      letter-spacing: -0.02em;
+    }
+    .pao-fields {
+      display: flex;
+      flex-direction: column;
+      gap: 0.5rem;
+      font-size: 0.95rem;
+    }
+    .pao-field {
+      display: flex;
+      gap: 0.5rem;
+      align-items: baseline;
+    }
+    .pao-field-label {
+      width: 3.5rem;
+      flex-shrink: 0;
+      color: var(--muted);
+      font-size: 0.8rem;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+    .pao-field-value {
+      font-weight: 500;
+    }
+    /* Reverse-mode: show PAO, guess number */
+    .pao-prompt {
+      font-size: 1rem;
+      line-height: 1.6;
+    }
+    .pao-prompt strong { color: var(--primary); }
+    /* Scene mode: three big numbers side by side */
+    .scene-numbers {
+      display: flex;
+      justify-content: center;
+      gap: 1.5rem;
+      margin: 0.25rem 0;
+    }
+    .scene-num {
+      font-size: clamp(2rem, 10vw, 3.5rem);
+      font-weight: 700;
+      font-variant-numeric: tabular-nums;
+      line-height: 1;
+    }
+    .scene-labels {
+      display: flex;
+      justify-content: center;
+      gap: 0.5rem;
+      font-size: 0.75rem;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.07em;
+    }
+    .scene-label { width: clamp(2.5rem, 10vw, 4rem); text-align: center; }
+    .load-section {
+      display: flex;
+      flex-direction: column;
+      gap: 0.75rem;
+      align-items: center;
+      padding: 1.5rem;
+      text-align: center;
+    }
+    .load-section p { color: var(--muted); font-size: 0.9rem; }
+  </style>
+</head>
+<body class="page">
+
+  <header class="site-header">
+    <a class="back-link" href="index.html" aria-label="Back to games">←</a>
+    <h1>PAO Quiz</h1>
+  </header>
+
+  <main class="main" id="main">
+
+    <!-- ── Load screen ─────────────────────────────────────────────────── -->
+    <div class="card" id="load-screen">
+      <div class="load-section">
+        <p style="font-size:1rem;font-weight:600;color:var(--text)">Load your PAO list</p>
+        <p>Upload a CSV with columns: <em>Number, Major_Word, Person, Person_Image, Action, Action_Image, Object, Object_Image</em></p>
+        <label class="btn btn-primary" style="cursor:pointer">
+          Choose CSV file
+          <input type="file" id="csv-input" accept=".csv,text/csv" style="display:none">
+        </label>
+        <div id="saved-row" class="hidden" style="display:flex;flex-direction:column;gap:0.4rem;align-items:center">
+          <p style="font-size:0.8rem">— or —</p>
+          <button class="btn btn-primary" id="load-saved-btn">Load saved list</button>
+          <button class="btn btn-ghost" style="font-size:0.8rem;padding:0.4rem 0.75rem" id="clear-saved-btn">Clear saved data</button>
+        </div>
+        <div id="no-saved-row">
+          <p style="font-size:0.8rem">— or —</p>
+          <button class="btn btn-ghost" id="use-sample-btn">Use built-in sample (0–9)</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── Game screen (hidden until CSV loaded) ───────────────────────── -->
+    <div id="game-screen" class="hidden">
+
+      <!-- Settings -->
+      <div class="card">
+        <div class="settings-row">
+          <label>Quiz:</label>
+          <div class="chip-group" id="quiz-chips">
+            <button class="chip active" data-quiz="person">Person</button>
+            <button class="chip"        data-quiz="action">Action</button>
+            <button class="chip"        data-quiz="object">Object</button>
+            <button class="chip"        data-quiz="scene">Scene</button>
+          </div>
+        </div>
+        <div class="settings-row" style="margin-top:0.75rem" id="dir-row">
+          <label>Direction:</label>
+          <div class="chip-group" id="dir-chips">
+            <button class="chip active" data-dir="forward">Number → PAO</button>
+            <button class="chip"        data-dir="reverse">PAO → Number</button>
+          </div>
+        </div>
+        <div class="settings-row" style="margin-top:0.75rem">
+          <button class="btn btn-ghost" style="font-size:0.8rem;padding:0.4rem 0.75rem" id="change-csv-btn">Change CSV</button>
+        </div>
+      </div>
+
+      <!-- Score -->
+      <div class="score-bar">
+        <span>Score <strong id="score">0</strong></span>
+        <span>Streak <strong id="streak">0</strong></span>
+        <span>Accuracy <strong id="accuracy">—</strong></span>
+        <span style="margin-left:auto;font-size:0.8rem" id="progress-label"></span>
+      </div>
+
+      <!-- Question -->
+      <div class="card question-card" id="question-card">
+        <p class="question-label" id="question-label">What is…</p>
+        <div id="question-display" aria-live="polite"></div>
+      </div>
+
+      <!-- Input -->
+      <div class="card">
+        <div class="input-area" id="input-area"></div>
+      </div>
+
+      <!-- Feedback + answer reveal -->
+      <div class="feedback" id="feedback" aria-live="assertive"></div>
+      <div class="card hidden" id="answer-card">
+        <div class="pao-fields" id="answer-fields"></div>
+      </div>
+
+      <!-- Next button -->
+      <div class="text-center hidden" id="next-wrap">
+        <button class="btn btn-ghost" id="next-btn">Skip</button>
+      </div>
+
+    </div><!-- /game-screen -->
+
+  </main>
+
+  <script src="js/speech.js"></script>
+  <script>
+    'use strict';
+
+    // ── CSV parser (RFC 4180-lite) ─────────────────────────────────────────
+    function parseCSV(text) {
+      const rows = [];
+      const lines = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n');
+      lines.forEach(function (line) {
+        if (!line.trim()) return;
+        const cells = [];
+        let cur = '', inQuote = false;
+        for (let i = 0; i < line.length; i++) {
+          const ch = line[i];
+          if (ch === '"') {
+            if (inQuote && line[i + 1] === '"') { cur += '"'; i++; }
+            else inQuote = !inQuote;
+          } else if (ch === ',' && !inQuote) {
+            cells.push(cur); cur = '';
+          } else {
+            cur += ch;
+          }
+        }
+        cells.push(cur);
+        rows.push(cells.map(function (c) { return c.trim(); }));
+      });
+      return rows;
+    }
+
+    // ── Load PAO data from parsed CSV rows ────────────────────────────────
+    function rowsToPAO(rows) {
+      if (rows.length < 2) return null;
+      const header = rows[0].map(function (h) { return h.toLowerCase(); });
+      const iNum    = header.indexOf('number');
+      const iPerson = header.indexOf('person');
+      const iAction = header.indexOf('action');
+      const iObject = header.indexOf('object');
+      if (iNum === -1 || iPerson === -1) return null;
+
+      const entries = [];
+      for (let i = 1; i < rows.length; i++) {
+        const r = rows[i];
+        const num = parseInt(r[iNum], 10);
+        if (isNaN(num)) continue;
+        entries.push({
+          number: num,
+          person: r[iPerson] || '',
+          action: iAction !== -1 ? (r[iAction] || '') : '',
+          object: iObject !== -1 ? (r[iObject] || '') : '',
+        });
+      }
+      return entries;
+    }
+
+    // ── Sample data (0–9) for demo purposes ───────────────────────────────
+    const SAMPLE_CSV = `Number,Major_Word,Person,Person_Image,Action,Action_Image,Object,Object_Image
+0,Sauce,Beyoncé,,To strut,,Hot sauce bottle,
+1,Seed,Poison Ivy,,To poison,,Seed,
+2,Sun,Baby (Teletubbies),,To grin,,Hill,
+3,Sumo,Psy,,To gallop,,Horse,
+4,Sir,Sir Mix-a-Lot,,To twerk,,Short shorts,
+5,Soul,Grim Reaper,,To reap,,Scythe,
+6,Sushi,Sanji,,To pick up,,Sushi,
+7,Ski,Ghost (CoD),,To mask up,,Ski mask,
+8,Sofa,Homer Simpson,,To lounge,,Donut,
+9,Spa,Darth Vader,,To choke,,Lightsaber,`;
+
+    const LS_KEY = 'hf_pao_csv';
+
+    // ── State ──────────────────────────────────────────────────────────────
+    let paoData  = null;
+    let paoMap   = {};     // number → entry (for fast scene lookup)
+    let quizMode = 'person';  // 'person' | 'action' | 'object' | 'scene'
+    let dirMode  = 'forward';
+    let current  = null;   // single entry (non-scene) or { entries: [e0,e1,e2] } (scene)
+    let queue    = [];
+    let autoTimer = null;
+    const gs     = HF.GameState();
+
+    // ── DOM refs ───────────────────────────────────────────────────────────
+    const loadScreen    = document.getElementById('load-screen');
+    const gameScreen    = document.getElementById('game-screen');
+    const csvInput      = document.getElementById('csv-input');
+    const useSampleBtn  = document.getElementById('use-sample-btn');
+    const loadSavedBtn  = document.getElementById('load-saved-btn');
+    const clearSavedBtn = document.getElementById('clear-saved-btn');
+    const savedRow      = document.getElementById('saved-row');
+    const noSavedRow    = document.getElementById('no-saved-row');
+    const dirRow        = document.getElementById('dir-row');
+    const qLabel        = document.getElementById('question-label');
+    const qDisplay      = document.getElementById('question-display');
+    const inputArea     = document.getElementById('input-area');
+    const feedback      = document.getElementById('feedback');
+    const answerCard    = document.getElementById('answer-card');
+    const answerFields  = document.getElementById('answer-fields');
+    const nextWrap      = document.getElementById('next-wrap');
+    const scoreEl       = document.getElementById('score');
+    const streakEl      = document.getElementById('streak');
+    const accEl         = document.getElementById('accuracy');
+    const progressEl    = document.getElementById('progress-label');
+
+    // ── localStorage ───────────────────────────────────────────────────────
+    function initLoadScreen() {
+      const saved = localStorage.getItem(LS_KEY);
+      if (saved) {
+        savedRow.classList.remove('hidden');
+        savedRow.style.display = 'flex';
+        noSavedRow.classList.add('hidden');
+      }
+    }
+
+    loadSavedBtn && loadSavedBtn.addEventListener('click', function () {
+      const saved = localStorage.getItem(LS_KEY);
+      if (saved) loadData(saved, false);
+    });
+
+    clearSavedBtn && clearSavedBtn.addEventListener('click', function () {
+      localStorage.removeItem(LS_KEY);
+      savedRow.classList.add('hidden');
+      savedRow.style.display = 'none';
+      noSavedRow.classList.remove('hidden');
+    });
+
+    csvInput.addEventListener('change', function () {
+      const file = csvInput.files[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = function (e) { loadData(e.target.result, true); };
+      reader.readAsText(file);
+    });
+
+    useSampleBtn.addEventListener('click', function () {
+      loadData(SAMPLE_CSV, false);
+    });
+
+    document.getElementById('change-csv-btn').addEventListener('click', function () {
+      gameScreen.classList.add('hidden');
+      loadScreen.classList.remove('hidden');
+    });
+
+    function loadData(csvText, save) {
+      const rows = parseCSV(csvText);
+      const data = rowsToPAO(rows);
+      if (!data || data.length === 0) {
+        alert('Could not parse CSV. Make sure it has Number, Person, Action, Object columns.');
+        return;
+      }
+      if (save) localStorage.setItem(LS_KEY, csvText);
+      paoData = data;
+      paoMap = {};
+      data.forEach(function (e) { paoMap[e.number] = e; });
+      loadScreen.classList.add('hidden');
+      gameScreen.classList.remove('hidden');
+      startGame();
+    }
+
+    // ── Settings ───────────────────────────────────────────────────────────
+    document.getElementById('quiz-chips').addEventListener('click', function (e) {
+      const btn = e.target.closest('.chip');
+      if (!btn) return;
+      document.querySelectorAll('#quiz-chips .chip').forEach(c => c.classList.remove('active'));
+      btn.classList.add('active');
+      quizMode = btn.dataset.quiz;
+      // Scene mode has no direction concept
+      dirRow.style.visibility = quizMode === 'scene' ? 'hidden' : 'visible';
+      newQuestion();
+    });
+
+    document.getElementById('dir-chips').addEventListener('click', function (e) {
+      const btn = e.target.closest('.chip');
+      if (!btn) return;
+      document.querySelectorAll('#dir-chips .chip').forEach(c => c.classList.remove('active'));
+      btn.classList.add('active');
+      dirMode = btn.dataset.dir;
+      newQuestion();
+    });
+
+    document.getElementById('next-btn').addEventListener('click', function () {
+      if (autoTimer) { clearTimeout(autoTimer); autoTimer = null; }
+      newQuestion();
+    });
+
+    // ── Game logic ─────────────────────────────────────────────────────────
+    function startGame() {
+      rebuildQueue();
+      newQuestion();
+    }
+
+    function rebuildQueue() {
+      queue = paoData.slice().sort(function () { return Math.random() - 0.5; });
+    }
+
+    function nextEntry() {
+      if (queue.length === 0) rebuildQueue();
+      return queue.pop();
+    }
+
+    function newQuestion() {
+      if (autoTimer) { clearTimeout(autoTimer); autoTimer = null; }
+      HF.cancelRecognition();
+      feedback.className = 'feedback';
+      feedback.textContent = '';
+      answerCard.classList.add('hidden');
+      answerFields.innerHTML = '';
+      nextWrap.classList.add('hidden');
+
+      progressEl.textContent = paoData.length + ' entries';
+
+      if (quizMode === 'scene') {
+        newSceneQuestion();
+        return;
+      }
+
+      current = nextEntry();
+
+      let qText;
+      if (dirMode === 'forward') {
+        qLabel.textContent = 'What is the ' + quizMode + ' for…';
+        qDisplay.innerHTML = '<div class="pao-number">' + fmtNum(current.number) + '</div>';
+        qText = 'What is the ' + quizMode + ' for number ' + current.number + '?';
+      } else {
+        const field = current[quizMode] || '';
+        qLabel.textContent = 'What number is…';
+        qDisplay.innerHTML = '<p class="pao-prompt">' + escapeHTML(field) + '</p>';
+        qText = 'What number is: ' + field;
+      }
+
+      inputArea.innerHTML = '';
+      const ph = dirMode === 'forward' ? getPAOPlaceholder() : 'e.g. 42';
+      const ui = HF.createInputUI(inputArea, checkAnswer, {
+        placeholder: ph,
+        inputmode:   dirMode === 'reverse' ? 'numeric' : 'text',
+      });
+      HF.speakThen(qText, function () {
+        ui.startListening();
+        if (!HF.audioMode) setTimeout(function () { ui.focus(); }, 50);
+      });
+    }
+
+    // ── Scene mode ─────────────────────────────────────────────────────────
+    //
+    // Pick 3 entries. Person comes from entries[0], Action from entries[1],
+    // Object from entries[2]. User describes the scene.
+
+    function newSceneQuestion() {
+      // Pick 3 distinct entries
+      const pool = paoData.slice().sort(function () { return Math.random() - 0.5; });
+      const e = [pool[0], pool[1], pool[2]];
+      current = { isScene: true, entries: e };
+
+      qLabel.textContent = 'Describe the scene for…';
+      qDisplay.innerHTML =
+        '<div class="scene-numbers">' +
+          '<span class="scene-num">' + fmtNum(e[0].number) + '</span>' +
+          '<span class="scene-num">' + fmtNum(e[1].number) + '</span>' +
+          '<span class="scene-num">' + fmtNum(e[2].number) + '</span>' +
+        '</div>' +
+        '<div class="scene-labels">' +
+          '<span class="scene-label">Person</span>' +
+          '<span class="scene-label">Action</span>' +
+          '<span class="scene-label">Object</span>' +
+        '</div>';
+
+      const qText = 'Describe the scene for ' +
+        e[0].number + ', ' + e[1].number + ', ' + e[2].number;
+
+      inputArea.innerHTML = '';
+      const ui = HF.createInputUI(inputArea, checkSceneAnswer, {
+        placeholder: 'e.g. Stuart Little laughing at a broken TV',
+        inputmode: 'text',
+      });
+      HF.speakThen(qText, function () {
+        ui.startListening();
+        if (!HF.audioMode) setTimeout(function () { ui.focus(); }, 50);
+      });
+    }
+
+    function checkSceneAnswer(raw) {
+      if (!current || !current.isScene) return;
+      const e = current.entries;
+
+      const personOk = matchField(e[0].person, raw);
+      const actionOk = matchField(e[1].action, raw);
+      const objectOk = matchField(e[2].object, raw);
+      const correct  = personOk && actionOk && objectOk;
+
+      // Build canonical scene string for display / TTS
+      const canonicalScene =
+        e[0].person + ' ' +
+        (e[1].action || '') + ' ' +
+        (e[2].object ? 'a ' + e[2].object : '');
+
+      if (correct) {
+        gs.correct();
+        showFeedback(true, 'Correct!');
+        HF.speak('Correct!');
+      } else {
+        gs.wrong();
+        showFeedback(false, 'Wrong. The scene was: ' + canonicalScene.trim());
+        HF.speak('Incorrect. The scene was: ' + canonicalScene.trim());
+        revealScene(e, canonicalScene.trim());
+      }
+
+      updateScore();
+      scheduleNext(correct ? 2000 : 5000);
+    }
+
+    function revealScene(entries, scene) {
+      answerFields.innerHTML = '';
+      const rows = [
+        [fmtNum(entries[0].number) + ' (Person)', entries[0].person],
+        [fmtNum(entries[1].number) + ' (Action)', entries[1].action],
+        [fmtNum(entries[2].number) + ' (Object)', entries[2].object],
+        ['Scene', scene],
+      ];
+      rows.forEach(function (pair) {
+        if (!pair[1]) return;
+        const row = document.createElement('div');
+        row.className = 'pao-field';
+        row.innerHTML =
+          '<span class="pao-field-label">' + escapeHTML(pair[0]) + '</span>' +
+          '<span class="pao-field-value">'  + escapeHTML(pair[1]) + '</span>';
+        answerFields.appendChild(row);
+      });
+      answerCard.classList.remove('hidden');
+    }
+
+    // ── Fuzzy PAO matching ─────────────────────────────────────────────────
+    //
+    // Strategy: strip stop words, stem, then bidirectional word-prefix match.
+
+    const STOP_WORDS = new Set([
+      'a','an','the','and','or','but','in','on','at','to','for',
+      'of','with','by','from','up','as','is','was','are','were',
+      'be','been','being','have','has','had','do','does','did',
+      'will','would','could','should','may','might','shall',
+      'into','onto','that','this','these','those','its','his','her',
+      'their','our','my','your','it','he','she','they','we','i',
+      'some','any','all','about','like','just','than',
+    ]);
+
+    function stem(w) {
+      if (w.length < 4) return w;
+      // CVC doubling before -ing: running→run, sitting→sit, strutting→strut
+      const dbl = w.match(/([bcdfghjklmnpqrstvwxyz])\1ing$/);
+      if (dbl) return w.slice(0, -(dbl[0].length - 1)); // keep one consonant
+      if (w.endsWith('ing') && w.length > 5) return w.slice(0, -3);
+      if (w.endsWith('ied'))                 return w.slice(0, -3) + 'y';
+      if (w.endsWith('ed')  && w.length > 4) return w.slice(0, -2);
+      if (w.endsWith('ies'))                 return w.slice(0, -3) + 'y';
+      if (w.endsWith('es')  && w.length > 3) return w.slice(0, -2);
+      if (w.endsWith('s')   && w.length > 3) return w.slice(0, -1);
+      return w;
+    }
+
+    function normPAO(s) {
+      return s
+        .replace(/^to\s+/i, '')         // strip leading "To "
+        .toLowerCase()
+        .replace(/[^a-z0-9 ]/g, ' ')    // non-alphanum → space
+        .split(/\s+/)
+        .filter(function (w) { return w && !STOP_WORDS.has(w); })
+        .map(stem)
+        .join(' ');
+    }
+
+    /**
+     * Check whether `raw` (user answer) matches `stored` (CSV field value).
+     * Uses bidirectional word-level prefix match after stemming.
+     */
+    function matchField(stored, raw) {
+      if (!stored) return true; // empty field always passes
+      const s = normPAO(stored);
+      const r = normPAO(raw);
+      if (!s) return true;
+      // Direct substring match
+      if (r.includes(s)) return true;
+      // Bidirectional word-level prefix: every word of stored must prefix-match
+      // at least one word in raw (or vice-versa — handles e-dropping in stems)
+      const sWords = s.split(' ');
+      const rWords = r.split(' ');
+      return sWords.every(function (sw) {
+        return rWords.some(function (rw) {
+          return rw.startsWith(sw) || sw.startsWith(rw);
+        });
+      });
+    }
+
+    function fmtNum(n) {
+      return String(n).padStart(2, '0');
+    }
+
+    function getPAOPlaceholder() {
+      if (quizMode === 'person') return 'Person\'s name';
+      if (quizMode === 'action') return 'Action / verb';
+      if (quizMode === 'object') return 'Object / thing';
+      return '';
+    }
+
+    function checkAnswer(raw) {
+      if (!current || current.isScene) return;
+      let correct = false;
+      let expectedStr = '';
+
+      if (dirMode === 'reverse') {
+        const n = parseInt(raw.replace(/\D/g, ''), 10);
+        correct = (n === current.number);
+        expectedStr = fmtNum(current.number);
+      } else {
+        const field = current[quizMode];
+        correct = matchField(field, raw);
+        expectedStr = field || '—';
+      }
+
+      if (correct) {
+        gs.correct();
+        showFeedback(true, 'Correct!');
+        HF.speak('Correct!');
+      } else {
+        gs.wrong();
+        showFeedback(false, 'Wrong. The answer was: ' + expectedStr);
+        HF.speak('Incorrect. The answer was: ' + expectedStr);
+        revealAnswer();
+      }
+
+      updateScore();
+      scheduleNext(correct ? 2000 : 4500);
+    }
+
+    function scheduleNext(ms) {
+      nextWrap.classList.remove('hidden');
+      autoTimer = setTimeout(newQuestion, ms);
+    }
+
+    function revealAnswer() {
+      answerFields.innerHTML = '';
+      const fields = [
+        ['#', fmtNum(current.number)],
+        ['Person', current.person],
+        ['Action', current.action],
+        ['Object', current.object],
+      ];
+      fields.forEach(function (pair) {
+        if (!pair[1]) return;
+        const row = document.createElement('div');
+        row.className = 'pao-field';
+        row.innerHTML =
+          '<span class="pao-field-label">' + escapeHTML(pair[0]) + '</span>' +
+          '<span class="pao-field-value">'  + escapeHTML(pair[1]) + '</span>';
+        answerFields.appendChild(row);
+      });
+      answerCard.classList.remove('hidden');
+    }
+
+    function showFeedback(ok, msg) {
+      feedback.textContent = msg;
+      feedback.className   = 'feedback ' + (ok ? 'correct' : 'wrong');
+    }
+
+    function updateScore() {
+      scoreEl.textContent  = gs.score;
+      streakEl.textContent = gs.streak;
+      accEl.textContent    = gs.total ? gs.accuracy() + '%' : '—';
+    }
+
+    function escapeHTML(str) {
+      return String(str)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;');
+    }
+
+    // ── Boot ───────────────────────────────────────────────────────────────    HF.renderAudioToggle(document.querySelector('.site-header'));    initLoadScreen();
+  </script>
+</body>
+</html>

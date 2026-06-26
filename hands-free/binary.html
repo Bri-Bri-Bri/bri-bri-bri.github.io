@@ -1,0 +1,214 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Binary Conversions – Hands-Free Games</title>
+  <link rel="stylesheet" href="css/style.css">
+  <script src="../shared/navbar.js"></script>
+</head>
+<body class="page">
+
+  <header class="site-header">
+    <a class="back-link" href="index.html" aria-label="Back to games">←</a>
+    <h1>Binary Conversions</h1>
+  </header>
+
+  <main class="main">
+
+    <!-- Settings -->
+    <div class="card">
+      <div class="settings-row">
+        <label>Mode:</label>
+        <div class="chip-group" id="mode-chips">
+          <button class="chip active" data-mode="dec2bin">Decimal → Binary</button>
+          <button class="chip"        data-mode="bin2dec">Binary → Decimal</button>
+        </div>
+      </div>
+      <div class="settings-row" style="margin-top:0.75rem">
+        <label>Bits:</label>
+        <div class="chip-group" id="bits-chips">
+          <button class="chip active" data-bits="4">4-bit</button>
+          <button class="chip"        data-bits="8">8-bit</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Score -->
+    <div class="score-bar">
+      <span>Score <strong id="score">0</strong></span>
+      <span>Streak <strong id="streak">0</strong></span>
+      <span>Accuracy <strong id="accuracy">—</strong></span>
+    </div>
+
+    <!-- Question -->
+    <div class="card question-card" id="question-card">
+      <p class="question-label" id="question-label">Convert to binary</p>
+      <div class="question-display" id="question-display" aria-live="polite">—</div>
+      <p class="question-sub" id="question-sub"></p>
+    </div>
+
+    <!-- Input -->
+    <div class="card">
+      <div class="input-area" id="input-area"></div>
+    </div>
+
+    <!-- Feedback -->
+    <div class="feedback" id="feedback" aria-live="assertive"></div>
+
+    <!-- Skip button (shown after answering; auto-advances after delay) -->
+    <div class="text-center hidden" id="next-wrap">
+      <button class="btn btn-ghost" id="next-btn">Skip</button>
+    </div>
+
+  </main>
+
+  <script src="js/speech.js"></script>
+  <script>
+    'use strict';
+
+    // ── State ──────────────────────────────────────────────────────────────
+    let mode     = 'dec2bin';   // 'dec2bin' | 'bin2dec'
+    let bits     = 4;           // 4 | 8
+    let current  = null;        // { decimal: number, binary: string }
+    let autoTimer = null;
+    const gs     = HF.GameState();
+
+    // ── DOM refs ───────────────────────────────────────────────────────────
+    const qLabel    = document.getElementById('question-label');
+    const qDisplay  = document.getElementById('question-display');
+    const qSub      = document.getElementById('question-sub');
+    const inputArea = document.getElementById('input-area');
+    const feedback  = document.getElementById('feedback');
+    const nextWrap  = document.getElementById('next-wrap');
+    const scoreEl   = document.getElementById('score');
+    const streakEl  = document.getElementById('streak');
+    const accEl     = document.getElementById('accuracy');
+
+    // ── Settings chips ─────────────────────────────────────────────────────
+    document.getElementById('mode-chips').addEventListener('click', function (e) {
+      const btn = e.target.closest('.chip');
+      if (!btn) return;
+      document.querySelectorAll('#mode-chips .chip').forEach(c => c.classList.remove('active'));
+      btn.classList.add('active');
+      mode = btn.dataset.mode;
+      newQuestion();
+    });
+
+    document.getElementById('bits-chips').addEventListener('click', function (e) {
+      const btn = e.target.closest('.chip');
+      if (!btn) return;
+      document.querySelectorAll('#bits-chips .chip').forEach(c => c.classList.remove('active'));
+      btn.classList.add('active');
+      bits = parseInt(btn.dataset.bits, 10);
+      newQuestion();
+    });
+
+    // ── Next button ────────────────────────────────────────────────────────
+    document.getElementById('next-btn').addEventListener('click', function () {
+      if (autoTimer) { clearTimeout(autoTimer); autoTimer = null; }
+      newQuestion();
+    });
+
+    // ── Core game logic ────────────────────────────────────────────────────
+
+    /** Generate a random integer in [min, max] */
+    function randInt(min, max) {
+      return Math.floor(Math.random() * (max - min + 1)) + min;
+    }
+
+    /** Pad a binary string to `bits` width */
+    function padBin(n, b) {
+      return n.toString(2).padStart(b, '0');
+    }
+
+    function newQuestion() {
+      if (autoTimer) { clearTimeout(autoTimer); autoTimer = null; }
+      HF.cancelRecognition();
+      feedback.className = 'feedback';
+      feedback.textContent = '';
+      nextWrap.classList.add('hidden');
+
+      const max = (1 << bits) - 1;
+      const dec = randInt(0, max);
+      const bin = padBin(dec, bits);
+      current   = { decimal: dec, binary: bin };
+
+      let qText;
+      if (mode === 'dec2bin') {
+        qLabel.textContent   = 'Convert to binary';
+        qDisplay.textContent = dec;
+        qSub.textContent     = '';
+        qText = 'What is ' + dec + ' in binary?';
+      } else {
+        qLabel.textContent   = 'Convert to decimal';
+        qDisplay.textContent = bin;
+        qSub.textContent     = '(' + bits + '-bit unsigned)';
+        qText = 'What is ' + bin.split('').join(' ') + ' in decimal?';
+      }
+
+      inputArea.innerHTML = '';
+      const ui = HF.createInputUI(inputArea, checkAnswer, {
+        placeholder: mode === 'dec2bin' ? 'e.g. 1010' : 'e.g. 10',
+        inputmode:   'text',
+      });
+      HF.speakThen(qText, function () {
+        ui.startListening();
+        if (!HF.audioMode) setTimeout(function () { ui.focus(); }, 50);
+      });
+    }
+
+    function normalise(raw) {
+      // Strip spaces, underscores (common grouping separators)
+      return raw.replace(/[\s_]/g, '').toLowerCase();
+    }
+
+    function checkAnswer(raw) {
+      if (!current) return;
+      const ans = normalise(raw);
+      let correct, correctAnswer;
+
+      if (mode === 'dec2bin') {
+        correctAnswer = current.binary;
+        correct = (ans === current.binary);
+      } else {
+        // Accept decimal number
+        const parsed = parseInt(ans, 10);
+        correctAnswer = String(current.decimal);
+        correct = (!isNaN(parsed) && parsed === current.decimal);
+      }
+
+      if (correct) {
+        gs.correct();
+        showFeedback(true, 'Correct!');
+        HF.speak('Correct!');
+      } else {
+        gs.wrong();
+        showFeedback(false, 'Wrong. The answer was ' + correctAnswer);
+        HF.speak('Incorrect. The answer was ' + correctAnswer);
+      }
+
+      updateScore();
+      scheduleNext(correct ? 2000 : 4000);
+    }
+
+    function scheduleNext(ms) {
+      nextWrap.classList.remove('hidden');
+      autoTimer = setTimeout(newQuestion, ms);
+    }
+
+    function showFeedback(ok, msg) {
+      feedback.textContent = msg;
+      feedback.className   = 'feedback ' + (ok ? 'correct' : 'wrong');
+    }
+
+    function updateScore() {
+      scoreEl.textContent  = gs.score;
+      streakEl.textContent = gs.streak;
+      accEl.textContent    = gs.total ? gs.accuracy() + '%' : '—';
+    }
+
+    // ── Boot ───────────────────────────────────────────────────────────────    HF.renderAudioToggle(document.querySelector('.site-header'));    newQuestion();
+  </script>
+</body>
+</html>

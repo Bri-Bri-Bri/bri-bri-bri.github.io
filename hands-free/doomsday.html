@@ -1,0 +1,252 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Doomsday – Hands-Free Games</title>
+  <link rel="stylesheet" href="css/style.css">
+  <script src="../shared/navbar.js"></script>
+</head>
+<body class="page">
+
+  <header class="site-header">
+    <a class="back-link" href="index.html" aria-label="Back to games">←</a>
+    <h1>Doomsday</h1>
+  </header>
+
+  <main class="main">
+
+    <!-- Settings -->
+    <div class="card">
+      <div class="settings-row">
+        <label>Year range:</label>
+        <div class="chip-group" id="range-chips">
+          <button class="chip active" data-range="current">2000–2099</button>
+          <button class="chip"        data-range="1900">1900–1999</button>
+          <button class="chip"        data-range="any">Any (1583+)</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Score -->
+    <div class="score-bar">
+      <span>Score <strong id="score">0</strong></span>
+      <span>Streak <strong id="streak">0</strong></span>
+      <span>Accuracy <strong id="accuracy">—</strong></span>
+    </div>
+
+    <!-- Question -->
+    <div class="card question-card">
+      <p class="question-label">What day of the week is…</p>
+      <div class="question-display" id="question-display" aria-live="polite" style="font-size: clamp(1.4rem, 6vw, 2.25rem);">—</div>
+    </div>
+
+    <!-- Input -->
+    <div class="card">
+      <p class="text-muted" style="margin-bottom:0.5rem;text-align:center;font-size:0.85rem;">
+        Say or type the day (e.g. "Monday", "Wed")
+      </p>
+      <div class="input-area" id="input-area"></div>
+    </div>
+
+    <!-- Feedback -->
+    <div class="feedback" id="feedback" aria-live="assertive"></div>
+
+    <!-- Next button -->
+    <div class="text-center hidden" id="next-wrap">
+      <button class="btn btn-ghost" id="next-btn">Skip</button>
+    </div>
+
+  </main>
+
+  <script src="js/speech.js"></script>
+  <script>
+    'use strict';
+
+    // ── Doomsday algorithm ─────────────────────────────────────────────────
+    //
+    // Returns the day of week (0=Sun … 6=Sat) for a given date.
+    // Uses John Conway's Doomsday algorithm.
+
+    const DAYS = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
+
+    // Month offsets for doomsday anchor dates within a year:
+    // Jan: 3 (non-leap), 4 (leap)   Feb: 28 (non-leap), 29 (leap)
+    // Mar: 7   Apr: 4   May: 9   Jun: 6   Jul: 11   Aug: 8
+    // Sep: 5   Oct: 10  Nov: 7   Dec: 12
+    const DOOMSDAY_DATES = [
+      [3, 4],  // Jan (non-leap, leap)
+      [28, 29],// Feb
+      7, 4, 9, 6, 11, 8, 5, 10, 7, 12
+    ];
+
+    function isLeap(y) {
+      return (y % 4 === 0 && y % 100 !== 0) || y % 400 === 0;
+    }
+
+    /** Anchor day for a century (0=Sun … 6=Sat) */
+    function centuryAnchor(y) {
+      const c = Math.floor(y / 100) % 4;
+      return [2, 0, 5, 3][c]; // Tue, Sun, Fri, Wed
+    }
+
+    /** Doomsday for a given year (0=Sun … 6=Sat) */
+    function doomsdayOfYear(y) {
+      const anchor = centuryAnchor(y);
+      const yy = y % 100;
+      const a  = Math.floor(yy / 12);
+      const b  = yy % 12;
+      const c  = Math.floor(b / 4);
+      return ((anchor + a + b + c) % 7 + 7) % 7;
+    }
+
+    /** Day of week for a specific date (0=Sun … 6=Sat) */
+    function dayOfWeek(year, month, day) {
+      const leap  = isLeap(year);
+      const dd    = DOOMSDAY_DATES[month - 1];
+      const anchor = Array.isArray(dd) ? dd[leap ? 1 : 0] : dd;
+      const doom   = doomsdayOfYear(year);
+      return ((doom + day - anchor) % 7 + 7) % 7;
+    }
+
+    // ── State ──────────────────────────────────────────────────────────────
+    let yearRange = 'current';
+    let current   = null;   // { year, month, day, dow }
+    let autoTimer = null;
+    const gs      = HF.GameState();
+
+    const MONTHS = ['January','February','March','April','May','June',
+                    'July','August','September','October','November','December'];
+    const MONTH_DAYS = [31,28,31,30,31,30,31,31,30,31,30,31];
+
+    // ── DOM refs ───────────────────────────────────────────────────────────
+    const qDisplay  = document.getElementById('question-display');
+    const inputArea = document.getElementById('input-area');
+    const feedback  = document.getElementById('feedback');
+    const nextWrap  = document.getElementById('next-wrap');
+    const scoreEl   = document.getElementById('score');
+    const streakEl  = document.getElementById('streak');
+    const accEl     = document.getElementById('accuracy');
+
+    // ── Settings ───────────────────────────────────────────────────────────
+    document.getElementById('range-chips').addEventListener('click', function (e) {
+      const btn = e.target.closest('.chip');
+      if (!btn) return;
+      document.querySelectorAll('#range-chips .chip').forEach(c => c.classList.remove('active'));
+      btn.classList.add('active');
+      yearRange = btn.dataset.range;
+      newQuestion();
+    });
+
+    document.getElementById('next-btn').addEventListener('click', function () {
+      if (autoTimer) { clearTimeout(autoTimer); autoTimer = null; }
+      newQuestion();
+    });
+
+    // ── Helpers ────────────────────────────────────────────────────────────
+    function randInt(min, max) {
+      return Math.floor(Math.random() * (max - min + 1)) + min;
+    }
+
+    function randomYear() {
+      if (yearRange === 'current') return randInt(2000, 2099);
+      if (yearRange === '1900')    return randInt(1900, 1999);
+      return randInt(1583, 2199);
+    }
+
+    function maxDayForMonth(month, year) {
+      if (month === 2 && isLeap(year)) return 29;
+      return MONTH_DAYS[month - 1];
+    }
+
+    // ── Game logic ─────────────────────────────────────────────────────────
+    function newQuestion() {
+      if (autoTimer) { clearTimeout(autoTimer); autoTimer = null; }
+      HF.cancelRecognition();
+      feedback.className = 'feedback';
+      feedback.textContent = '';
+      nextWrap.classList.add('hidden');
+
+      const year  = randomYear();
+      const month = randInt(1, 12);
+      const day   = randInt(1, maxDayForMonth(month, year));
+      const dow   = dayOfWeek(year, month, day);
+
+      current = { year, month, day, dow };
+
+      const dateStr = MONTHS[month - 1] + ' ' + day + ', ' + year;
+      qDisplay.textContent = dateStr;
+
+      inputArea.innerHTML = '';
+      const ui = HF.createInputUI(inputArea, checkAnswer, {
+        placeholder: 'e.g. Monday',
+        inputmode:   'text',
+      });
+      HF.speakThen('What day of the week is ' + dateStr + '?', function () {
+        ui.startListening();
+        if (!HF.audioMode) setTimeout(function () { ui.focus(); }, 50);
+      });
+    }
+
+    // Accept full name or common abbreviations
+    const DAY_ALIASES = {
+      sunday: 0, sun: 0,
+      monday: 1, mon: 1,
+      tuesday: 2, tue: 2, tues: 2,
+      wednesday: 3, wed: 3,
+      thursday: 4, thu: 4, thur: 4, thurs: 4,
+      friday: 5, fri: 5,
+      saturday: 6, sat: 6,
+    };
+
+    function parseDay(raw) {
+      const key = raw.toLowerCase().trim().replace(/[^a-z]/g, '');
+      return DAY_ALIASES.hasOwnProperty(key) ? DAY_ALIASES[key] : -1;
+    }
+
+    function checkAnswer(raw) {
+      if (!current) return;
+      const guessed = parseDay(raw);
+      if (guessed === -1) {
+        showFeedback(false, 'Didn\'t recognise "' + raw + '" — try e.g. "Monday"');
+        HF.speak('Sorry, I didn\'t understand that. Try saying a day of the week.');
+        return;
+      }
+
+      const correct = (guessed === current.dow);
+      const correctName = DAYS[current.dow];
+
+      if (correct) {
+        gs.correct();
+        showFeedback(true, 'Correct! ' + correctName);
+        HF.speak('Correct! It\'s ' + correctName + '.');
+      } else {
+        gs.wrong();
+        showFeedback(false, 'Wrong. It was ' + correctName);
+        HF.speak('Incorrect. It was ' + correctName + '.');
+      }
+
+      updateScore();
+      scheduleNext(correct ? 2000 : 4000);
+    }
+
+    function scheduleNext(ms) {
+      nextWrap.classList.remove('hidden');
+      autoTimer = setTimeout(newQuestion, ms);
+    }
+
+    function showFeedback(ok, msg) {
+      feedback.textContent = msg;
+      feedback.className   = 'feedback ' + (ok ? 'correct' : 'wrong');
+    }
+
+    function updateScore() {
+      scoreEl.textContent  = gs.score;
+      streakEl.textContent = gs.streak;
+      accEl.textContent    = gs.total ? gs.accuracy() + '%' : '—';
+    }
+
+    // ── Boot ───────────────────────────────────────────────────────────────    HF.renderAudioToggle(document.querySelector('.site-header'));    newQuestion();
+  </script>
+</body>
+</html>
