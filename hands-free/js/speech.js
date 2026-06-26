@@ -151,7 +151,6 @@
     let isSpeaking   = false;
     let silenceStart = null;
     let speechStart  = null;
-    const chunks     = [];
 
     // Web Audio VAD setup
     const audioCtx  = new AudioContext();
@@ -162,20 +161,24 @@
     source.connect(analyser);
     const dataArray = new Float32Array(analyser.fftSize);
 
-    // MediaRecorder — collects audio in 100 ms slices while VAD runs.
-    // We keep a small rolling pre-buffer of chunks recorded BEFORE speech
-    // is detected, so we don't cut off the first phoneme. Once speech
-    // starts we accumulate speech-only chunks. This means Whisper only
-    // receives the utterance itself, not all the silence before it.
-    const PRE_BUFFER_CHUNKS = 3; // 3 × 100 ms = 300 ms look-ahead
+    // MediaRecorder — 100 ms slices, routed into a pre-buffer or speechChunks.
+    //
+    // The FIRST chunk from a WebM MediaRecorder contains the EBML initialisation
+    // segment (container header). Without it the blob is undecodable, causing the
+    // "unknown content type" DOMException. We save it in headerChunk and never
+    // roll it out of the window. The rolling pre-buffer (last 2 × 100 ms = 200 ms)
+    // captures audio just before speech onset so the first phoneme isn't clipped.
+    const PRE_BUFFER_CHUNKS = 2; // rolling window size (excludes header chunk)
     const mimeType = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4']
       .find(function (t) { return MediaRecorder.isTypeSupported(t); }) || '';
     const mr = new MediaRecorder(stream, mimeType ? { mimeType } : {});
-    let preBuffer      = [];  // rolling window before speech starts
-    let speechChunks   = [];  // chunks from speech onset onward
+    let headerChunk    = null; // always kept — contains EBML container header
+    let preBuffer      = [];   // rolling window before speech onset
+    let speechChunks   = [];   // chunks from speech onset onward
     let recordingSpeech = false;
     mr.ondataavailable = function (ev) {
       if (!ev.data.size || !active) return;
+      if (!headerChunk) { headerChunk = ev.data; return; } // save header, don't route it
       if (recordingSpeech) {
         speechChunks.push(ev.data);
       } else {
@@ -193,15 +196,15 @@
       try { source.disconnect(); } catch (_) {}
       try { audioCtx.close();    } catch (_) {}
 
-      const allChunks = preBuffer.concat(speechChunks);
-      if (!shouldTranscribe || !allChunks.length) {
+      const allChunks = (headerChunk ? [headerChunk] : []).concat(preBuffer).concat(speechChunks);
+      if (!shouldTranscribe || allChunks.length < 2) {
         try { mr.stop(); } catch (_) {}
         onResult(null);
         return;
       }
 
       onStatus('thinking');
-      const capturedChunks = preBuffer.concat(speechChunks);
+      const capturedChunks = allChunks;
       mr.onstop = function () {
         const blob = new Blob(capturedChunks, { type: mr.mimeType || 'audio/webm' });
         const url  = URL.createObjectURL(blob);
@@ -381,7 +384,32 @@
     }
 
     // ── Build UI ──────────────────────────────────────────────────────────
-    if (HF.VOICE_SUPPORTED) {
+    // Voice controls live in a wrapper so they can be rebuilt in-place when
+    // the user switches between voice-VAD mode and keyboard mode mid-game.
+    const voiceWrap = document.createElement('div');
+    voiceWrap.className = 'voice-wrap';
+    let modelLoadStarted = false;
+
+    function buildVoiceControls() {
+      voiceWrap.innerHTML = '';
+      micBtn   = null;
+      statusEl = null;
+      if (!HF.VOICE_SUPPORTED) return;
+
+      // Mode toggle — swap between auto-listen (VAD) and keyboard input
+      const modeBtn = document.createElement('button');
+      modeBtn.type = 'button';
+      modeBtn.className = 'btn-mode';
+      modeBtn.textContent = HF.audioMode ? '⌨️ Use keyboard' : '🎤 Use voice';
+      modeBtn.addEventListener('click', function () {
+        if (currentCycle) { currentCycle.stop(); currentCycle = null; _activeCycle = null; }
+        releaseMic();
+        HF.setAudioMode(!HF.audioMode);
+        buildVoiceControls();
+        if (HF.audioMode && !answered) beginListening();
+      });
+      voiceWrap.appendChild(modeBtn);
+
       if (HF.audioMode) {
         // Auto-listen mode: status indicator, no button.
         // Game calls startListening() after TTS finishes.
@@ -389,7 +417,7 @@
         statusEl.className = 'audio-status';
         statusEl.setAttribute('aria-live', 'polite');
         statusEl.textContent = HF.WHISPER_READY ? '🎤 Ready' : '⏳ Loading…';
-        container.appendChild(statusEl);
+        voiceWrap.appendChild(statusEl);
       } else {
         // Manual mode: click once to start listening, VAD handles the rest.
         // Click again to cancel.
@@ -410,11 +438,12 @@
           }
         });
 
-        container.appendChild(micBtn);
+        voiceWrap.appendChild(micBtn);
       }
 
-      // Pre-load model immediately so it's ready when the user first speaks
-      if (!HF.WHISPER_READY) {
+      // Pre-load model once — subsequent buildVoiceControls() calls skip this
+      if (!HF.WHISPER_READY && !modelLoadStarted) {
+        modelLoadStarted = true;
         loadModel(function (p) {
           if (answered) return;
           if (p.status === 'progress' && p.progress != null) {
@@ -430,6 +459,9 @@
         });
       }
     }
+
+    buildVoiceControls();
+    container.appendChild(voiceWrap);
 
     // Text input — always present as typed fallback
     const form = document.createElement('form');

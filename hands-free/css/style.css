@@ -325,6 +325,32 @@ body {
   border-color: var(--primary);
 }
 
+/* ── Voice / keyboard mode toggle (inside input UI) ─────────────────────── */
+.voice-wrap {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.btn-mode {
+  padding: 0.25rem 0.75rem;
+  border-radius: 9999px;
+  border: 1.5px solid var(--border);
+  background: transparent;
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 500;
+  cursor: pointer;
+  white-space: nowrap;
+  touch-action: manipulation;
+  transition: color 0.12s, border-color 0.12s;
+}
+.btn-mode:hover {
+  color: var(--text);
+  border-color: var(--text);
+}
+
 /* ── Audio mode status indicator ─────────────────────────────────────────── */
 .audio-status {
   font-size: 0.875rem;
