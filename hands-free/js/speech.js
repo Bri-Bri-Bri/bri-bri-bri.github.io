@@ -1,35 +1,35 @@
 /**
- * speech.js — shared TTS + voice input utilities for Hands-Free Games
+ * speech.js — TTS + Whisper VAD-based STT for Hands-Free Games
  *
- * Exposes a global `HF` object:
- *   HF.speak(text, opts)              — Text-to-Speech (fire-and-forget)
- *   HF.speakThen(text, cb, opts)      — TTS, then call cb when done
- *   HF.cancelSpeech()                 — stop any TTS in progress
- *   HF.VOICE_SUPPORTED                — true if native SpeechRecognition available
- *   HF.audioMode                      — true = auto-listen after TTS (persisted)
- *   HF.setAudioMode(bool)             — toggle + persist audioMode
- *   HF.cancelRecognition()            — abort any active SR session
- *   HF.renderAudioToggle(container)   — inserts a toggle button into container
- *   HF.createInputUI(el, cb, opts)    — render input (button or status + text form)
- *   HF.GameState()                    — score/streak/accuracy tracker
+ * Speech recognition runs entirely in-browser via Whisper. No audio is sent
+ * to any server. The model (~40 MB, quantized) is downloaded once on first
+ * mic use and cached in browser Cache Storage indefinitely.
  *
- * Audio mode (VOICE_SUPPORTED only):
- *   Each game calls HF.speakThen(question, () => ui.startListening())
- *   When audioMode is on the Speak button is replaced with a status indicator
- *   and SR starts automatically when TTS ends.
+ * Recognition flow: mic stays open after each question; a lightweight Voice
+ * Activity Detector (VAD) watches for speech via AnalyserNode. When the user
+ * stops speaking (~800 ms silence), the audio chunk is automatically sent to
+ * Whisper. On an empty/noise result the cycle restarts immediately.
+ *
+ * API (same as before):
+ *   HF.speak(text, opts)
+ *   HF.speakThen(text, cb, opts)
+ *   HF.cancelSpeech()
+ *   HF.VOICE_SUPPORTED        — true when MediaRecorder is available
+ *   HF.WHISPER_READY          — true once the model is loaded
+ *   HF.audioMode              — TTS read-aloud of questions (persisted)
+ *   HF.setAudioMode(bool)
+ *   HF.cancelRecognition()
+ *   HF.renderAudioToggle(container)
+ *   HF.createInputUI(el, cb, opts)   → { focus, reset, startListening }
+ *   HF.GameState()
  */
 (function () {
   'use strict';
 
   const HF = window.HF = window.HF || {};
 
-  // ── Text-to-Speech ──────────────────────────────────────────────────────
-  /**
-   * Speak text aloud via the Web Speech API.
-   * @param {string} text
-   * @param {{ rate?: number, pitch?: number, volume?: number }} [opts]
-   * @returns {SpeechSynthesisUtterance|null}
-   */
+  // ── TTS ─────────────────────────────────────────────────────────────────
+
   HF.speak = function (text, opts) {
     if (!window.speechSynthesis) return null;
     window.speechSynthesis.cancel();
@@ -39,7 +39,6 @@
       if (opts.pitch  !== undefined) utt.pitch  = opts.pitch;
       if (opts.volume !== undefined) utt.volume = opts.volume;
     }
-    // Work around a Chrome bug where speechSynthesis stalls after ~15 s
     window.speechSynthesis.speak(utt);
     return utt;
   };
@@ -48,38 +47,8 @@
     if (window.speechSynthesis) window.speechSynthesis.cancel();
   };
 
-  // ── Speech Recognition detection ────────────────────────────────────────
-  HF.VOICE_SUPPORTED = !!(window.SpeechRecognition || window.webkitSpeechRecognition);
-  // ── Audio mode (auto-listen after TTS) ────────────────────────────────
-  // Default ON when voice is supported; persisted in localStorage.
-  HF.audioMode = HF.VOICE_SUPPORTED &&
-    localStorage.getItem('hf_audiomode') !== 'off';
-
-  HF.setAudioMode = function (val) {
-    HF.audioMode = !!val;
-    localStorage.setItem('hf_audiomode', val ? 'on' : 'off');
-  };
-
-  // Global handle for the currently active SpeechRecognition instance
-  HF._recognition = null;
-
-  HF.cancelRecognition = function () {
-    if (HF._recognition) {
-      try { HF._recognition.abort(); } catch (_) {}
-      HF._recognition = null;
-    }
-  };
-
-  // ── speakThen ───────────────────────────────────────────────────────────
-  /**
-   * Speak text aloud, then call cb when finished (or immediately if no TTS).
-   * Includes a timeout fallback in case onend doesn't fire.
-   */
   HF.speakThen = function (text, cb, opts) {
-    if (!window.speechSynthesis) {
-      if (cb) setTimeout(cb, 50);
-      return null;
-    }
+    if (!window.speechSynthesis) { if (cb) setTimeout(cb, 50); return null; }
     window.speechSynthesis.cancel();
     const utt = new SpeechSynthesisUtterance(text);
     if (opts) {
@@ -90,27 +59,169 @@
     if (cb) {
       let fired = false;
       const once = function () { if (!fired) { fired = true; cb(); } };
-      utt.onend   = once;
-      utt.onerror = once;
-      // Fallback: ~150 wpm, 5 chars/word, +800 ms buffer
-      const ms = Math.max(1200, Math.round(text.length / 5 / 150 * 60000) + 800);
-      setTimeout(once, ms);
+      utt.onend = utt.onerror = once;
+      setTimeout(once, Math.max(1200, Math.round(text.length / 5 / 150 * 60000) + 800));
     }
     window.speechSynthesis.speak(utt);
     return utt;
   };
 
-  // ── renderAudioToggle ──────────────────────────────────────────────────
-  /**
-   * Append an Audio on/off toggle button to `container`.
-   * Only rendered when VOICE_SUPPORTED is true.
-   */
+  // ── Whisper + VAD config ─────────────────────────────────────────────────
+
+  const TRANSFORMERS_URL  = 'https://cdn.jsdelivr.net/npm/@xenova/transformers@2.17.2';
+  const MODEL_ID          = 'Xenova/whisper-tiny.en';
+  const VAD_THRESHOLD     = 0.015;  // RMS level above which audio counts as speech
+  const VAD_SILENCE_MS    = 800;    // ms of silence after speech → trigger transcription
+  const VAD_MIN_SPEECH_MS = 300;    // ignore bursts shorter than this (noise/clicks)
+
+  HF.VOICE_SUPPORTED = !!(navigator.mediaDevices && window.MediaRecorder);
+  HF.WHISPER_READY   = false;
+  HF.audioMode       = localStorage.getItem('hf_audiomode') !== 'off';
+
+  HF.setAudioMode = function (val) {
+    HF.audioMode = !!val;
+    localStorage.setItem('hf_audiomode', val ? 'on' : 'off');
+  };
+
+  // ── Model loading ────────────────────────────────────────────────────────
+
+  let _pipe = null, _pipePromise = null, _progressCbs = [];
+
+  function _notifyProgress(p) {
+    _progressCbs.forEach(function (cb) { try { cb(p); } catch (_) {} });
+  }
+
+  function loadModel(onProgress) {
+    if (onProgress) _progressCbs.push(onProgress);
+    if (_pipe) { if (onProgress) onProgress({ status: 'ready' }); return Promise.resolve(_pipe); }
+    if (_pipePromise) return _pipePromise;
+    _pipePromise = import(TRANSFORMERS_URL)
+      .then(function (mod) {
+        mod.env.useBrowserCache  = true;
+        mod.env.allowLocalModels = false;
+        return mod.pipeline('automatic-speech-recognition', MODEL_ID, {
+          quantized: true,
+          progress_callback: _notifyProgress,
+        });
+      })
+      .then(function (pipe) {
+        _pipe = pipe;
+        HF.WHISPER_READY = true;
+        _notifyProgress({ status: 'ready' });
+        return pipe;
+      });
+    return _pipePromise;
+  }
+
+  // ── Recognition handle ───────────────────────────────────────────────────
+
+  let _activeCycle = null;
+
+  HF.cancelRecognition = function () {
+    if (_activeCycle) { _activeCycle.stop(); _activeCycle = null; }
+  };
+
+  // ── VAD recording cycle ──────────────────────────────────────────────────
+  // One cycle = listen until utterance detected → transcribe → call onResult.
+  // The caller is responsible for restarting if onResult returns null.
+  //
+  // @param {MediaStream}   stream
+  // @param {function(?string)} onResult   — called with transcript or null
+  // @param {function(string)}  onStatus   — 'listening'|'speaking'|'thinking'
+  // @returns {{ stop() }}
+
+  function startCycle(stream, onResult, onStatus) {
+    let active       = true;
+    let isSpeaking   = false;
+    let silenceStart = null;
+    let speechStart  = null;
+    const chunks     = [];
+
+    // Web Audio VAD setup
+    const audioCtx  = new AudioContext();
+    audioCtx.resume(); // unblock in browsers that auto-suspend before user gesture
+    const analyser  = audioCtx.createAnalyser();
+    analyser.fftSize = 512;
+    const source    = audioCtx.createMediaStreamSource(stream);
+    source.connect(analyser);
+    const dataArray = new Float32Array(analyser.fftSize);
+
+    // MediaRecorder — collects audio in 100 ms slices while VAD runs
+    const mimeType = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4']
+      .find(function (t) { return MediaRecorder.isTypeSupported(t); }) || '';
+    const mr = new MediaRecorder(stream, mimeType ? { mimeType } : {});
+    mr.ondataavailable = function (ev) { if (ev.data.size > 0 && active) chunks.push(ev.data); };
+    mr.start(100);
+
+    onStatus('listening');
+
+    // Called when VAD decides the utterance is done (or cycle is cancelled)
+    function finish(shouldTranscribe) {
+      active = false;
+      try { source.disconnect(); } catch (_) {}
+      try { audioCtx.close();    } catch (_) {}
+
+      if (!shouldTranscribe || !chunks.length) {
+        try { mr.stop(); } catch (_) {}
+        onResult(null);
+        return;
+      }
+
+      onStatus('thinking');
+      mr.onstop = function () {
+        const blob = new Blob(chunks, { type: mr.mimeType || 'audio/webm' });
+        const url  = URL.createObjectURL(blob);
+        loadModel()
+          .then(function (pipe) { return pipe(url, { language: 'english', task: 'transcribe' }); })
+          .then(function (result) { URL.revokeObjectURL(url); onResult((result.text || '').trim()); })
+          .catch(function (err)  { console.error('[HF]', err); URL.revokeObjectURL(url); onResult(null); });
+      };
+      try { mr.stop(); } catch (_) { onResult(null); }
+    }
+
+    // VAD poll — runs every 50 ms
+    function poll() {
+      if (!active) return;
+
+      analyser.getFloatTimeDomainData(dataArray);
+      let sum = 0;
+      for (let i = 0; i < dataArray.length; i++) sum += dataArray[i] * dataArray[i];
+      const rms = Math.sqrt(sum / dataArray.length);
+      const now = Date.now();
+
+      if (rms > VAD_THRESHOLD) {
+        if (!isSpeaking) { isSpeaking = true; speechStart = now; onStatus('speaking'); }
+        silenceStart = null;
+      } else if (isSpeaking) {
+        if (!silenceStart) silenceStart = now;
+        if (now - silenceStart >= VAD_SILENCE_MS) {
+          // Silence long enough — decide whether to transcribe based on speech length
+          const speechMs = (silenceStart || now) - (speechStart || now);
+          finish(speechMs >= VAD_MIN_SPEECH_MS);
+          return;
+        }
+      }
+
+      setTimeout(poll, 50);
+    }
+    poll();
+
+    return {
+      stop: function () {
+        if (!active) return;
+        active = false;
+        try { source.disconnect(); audioCtx.close(); mr.stop(); } catch (_) {}
+      },
+    };
+  }
+
+  // ── renderAudioToggle ────────────────────────────────────────────────────
+
   HF.renderAudioToggle = function (container) {
-    if (!HF.VOICE_SUPPORTED) return;
     const btn = document.createElement('button');
     btn.type = 'button';
     btn.className = 'audio-toggle' + (HF.audioMode ? ' on' : '');
-    btn.title = 'Toggle full audio mode (auto-listen after question is read)';
+    btn.title = 'Toggle text-to-speech for questions';
     btn.textContent = 'Audio ' + (HF.audioMode ? 'on' : 'off');
     btn.addEventListener('click', function () {
       HF.setAudioMode(!HF.audioMode);
@@ -121,116 +232,164 @@
     return btn;
   };
 
-  /**
-   * Build the voice-input UI inside `container`.
-   *
-   * When SpeechRecognition IS available:
-   *   – A large "🎤 Speak" button that toggles the mic
-   *   – A collapsible text input + Submit for typed fallback
-   *
-   * When SpeechRecognition is NOT available (Firefox):
-   *   – A text input + Submit button
-   *   – A small note explaining the situation
-   *
-   * @param {HTMLElement} container  — where to render the UI
-   * @param {function(string):void} onAnswer  — called with the trimmed answer string
-   * @param {{ placeholder?: string, lang?: string }} [opts]
-   * @returns {{ focus(): void, reset(): void }}
-   */
+  // ── createInputUI ────────────────────────────────────────────────────────
+
   HF.createInputUI = function (container, onAnswer, opts) {
     opts = opts || {};
     container.innerHTML = '';
 
-    let micBtn  = null;
-    let statusEl = null;
+    let answered     = false;
+    let micStream    = null;   // kept open across same-question retries
+    let currentCycle = null;
+    let micBtn       = null;
+    let statusEl     = null;
 
-    // ── Shared SR start logic ────────────────────────────────────────────
-    // `answered` is scoped to the createInputUI call, not individual sessions.
-    // When the game rebuilds the UI for a new question, this closure is gone,
-    // so the restart loop stops naturally.
-    let answered = false;
-    let fatalError = false;
-
-    function doStartListening() {
-      if (!HF.VOICE_SUPPORTED) return;
-      if (HF._recognition) return; // already active
-      if (answered) return;        // answer already came in via text/voice
-      if (fatalError) return;      // permission denied / service down
-
-      const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-      const rec = new SR();
-      HF._recognition = rec;
-      rec.lang = opts.lang || 'en-US';
-      rec.interimResults = false;
-      rec.maxAlternatives = 1;
-
-      rec.onstart = function () {
-        if (statusEl) { statusEl.classList.add('listening'); statusEl.textContent = 'Listening...'; }
-        if (micBtn)   { micBtn.classList.add('listening');   micBtn.textContent   = 'Listening...'; }
+    // ── Status helper ─────────────────────────────────────────────────────
+    // Accepts canonical state keys or raw label strings (e.g. '⏳ 45%')
+    function setStatus(s) {
+      const map = {
+        idle:      ['🎤 Speak',       false, ''],
+        listening: ['🎤 Listening…',  false, ''],
+        speaking:  ['🔴 Speaking…',   false, ' listening'],
+        thinking:  ['⏳ Thinking…',   true,  ''],
       };
+      const [label, disabled, extra] = map[s] || [s, true, ''];
+      if (micBtn) {
+        micBtn.className  = 'btn-mic' + extra;
+        micBtn.textContent = label;
+        micBtn.disabled   = disabled;
+      }
+      if (statusEl) {
+        statusEl.className  = 'audio-status' + extra;
+        statusEl.textContent = label;
+      }
+    }
 
-      rec.onend = function () {
-        if (HF._recognition === rec) HF._recognition = null;
-        if (statusEl) { statusEl.classList.remove('listening'); statusEl.textContent = 'Ready'; }
-        if (micBtn)   { micBtn.classList.remove('listening');   micBtn.textContent   = 'Speak'; }
-        // Restart only if nothing has stopped the loop (answered, fatal error, or stale UI).
-        if (HF.audioMode && !answered && !fatalError && document.contains(form)) {
-          setTimeout(doStartListening, 300);
+    // ── Mic management ────────────────────────────────────────────────────
+    function releaseMic() {
+      if (micStream) {
+        micStream.getTracks().forEach(function (t) { t.stop(); });
+        micStream = null;
+      }
+    }
+
+    // ── Core listen + auto-retry loop ─────────────────────────────────────
+    // Starts a VAD cycle on `stream`. On empty/noise result, restarts
+    // immediately on the same stream. On valid transcript, fires onAnswer.
+    function listenOnStream(stream) {
+      currentCycle = startCycle(stream, function onResult(transcript) {
+        currentCycle = null;
+        _activeCycle = null;
+        if (answered) return;
+
+        if (transcript) {
+          answered = true;
+          releaseMic();
+          onAnswer(transcript);
+        } else {
+          // Nothing useful heard — restart cycle on the same open stream
+          if (!answered && micStream && micStream.active) {
+            setStatus('listening');
+            setTimeout(function () {
+              if (!answered) listenOnStream(micStream);
+            }, 200);
+          }
         }
-      };
-
-      rec.onresult = function (e) {
-        const transcript = e.results[0][0].transcript.trim();
-        answered = true;
-        rec.stop();
-        if (transcript) onAnswer(transcript);
-      };
-
-      rec.onerror = function (e) {
-        console.warn('[HF] SpeechRecognition error:', e.error);
-        if (HF._recognition === rec) HF._recognition = null;
-        if (statusEl) { statusEl.classList.remove('listening'); statusEl.textContent = 'Ready'; }
-        if (micBtn)   { micBtn.classList.remove('listening');   micBtn.textContent   = 'Speak'; }
-        if (e.error === 'not-allowed' || e.error === 'service-not-available') {
-          fatalError = true; // onend will fire next but the guard above will catch it
-        }
-      };
-
-      rec.start();
+      }, setStatus);
+      _activeCycle = currentCycle;
     }
 
-    // ── Manual Speak button (non-audio mode) ─────────────────────────────
-    if (HF.VOICE_SUPPORTED && !HF.audioMode) {
-      micBtn = document.createElement('button');
-      micBtn.type = 'button';
-      micBtn.className = 'btn-mic';
-      micBtn.setAttribute('aria-label', 'Start voice input');
-      micBtn.textContent = 'Speak';
-      micBtn.addEventListener('click', function () {
-        if (HF._recognition) { HF._recognition.stop(); return; }
-        doStartListening();
-      });
-      container.appendChild(micBtn);
+    // ── Entry point (called by game after TTS, or by button click) ────────
+    function beginListening() {
+      if (answered || currentCycle) return;
+
+      // Defer until model is ready so "thinking" doesn't stall on first use
+      if (!HF.WHISPER_READY) {
+        setStatus('⏳ Loading…');
+        loadModel().then(function () {
+          if (!answered && !currentCycle) beginListening();
+        }).catch(function () { setStatus('idle'); });
+        return;
+      }
+
+      // Reuse the open stream if still alive (avoids re-requesting mic mid-game)
+      if (micStream && micStream.active) {
+        listenOnStream(micStream);
+        return;
+      }
+
+      navigator.mediaDevices.getUserMedia({ audio: true })
+        .then(function (stream) {
+          if (answered) { stream.getTracks().forEach(function (t) { t.stop(); }); return; }
+          micStream = stream;
+          listenOnStream(stream);
+        })
+        .catch(function (err) {
+          console.warn('[HF] Mic access denied:', err);
+          setStatus('idle');
+        });
     }
 
-    // ── Status indicator (audio mode) ────────────────────────────────────
-    if (HF.VOICE_SUPPORTED && HF.audioMode) {
-      statusEl = document.createElement('div');
-      statusEl.className = 'audio-status';
-      statusEl.setAttribute('aria-live', 'polite');
-      statusEl.textContent = 'Ready';
-      container.appendChild(statusEl);
+    // ── Build UI ──────────────────────────────────────────────────────────
+    if (HF.VOICE_SUPPORTED) {
+      if (HF.audioMode) {
+        // Auto-listen mode: status indicator, no button.
+        // Game calls startListening() after TTS finishes.
+        statusEl = document.createElement('div');
+        statusEl.className = 'audio-status';
+        statusEl.setAttribute('aria-live', 'polite');
+        statusEl.textContent = HF.WHISPER_READY ? '🎤 Ready' : '⏳ Loading…';
+        container.appendChild(statusEl);
+      } else {
+        // Manual mode: click once to start listening, VAD handles the rest.
+        // Click again to cancel.
+        micBtn = document.createElement('button');
+        micBtn.type = 'button';
+        micBtn.className = 'btn-mic';
+        micBtn.setAttribute('aria-label', 'Start voice input');
+        setStatus(HF.WHISPER_READY ? 'idle' : '⏳ Loading…');
+
+        micBtn.addEventListener('click', function () {
+          if (currentCycle) {
+            // Cancel active listening
+            currentCycle.stop(); currentCycle = null; _activeCycle = null;
+            releaseMic();
+            setStatus('idle');
+          } else {
+            beginListening();
+          }
+        });
+
+        container.appendChild(micBtn);
+      }
+
+      // Pre-load model immediately so it's ready when the user first speaks
+      if (!HF.WHISPER_READY) {
+        loadModel(function (p) {
+          if (answered) return;
+          if (p.status === 'progress' && p.progress != null) {
+            const pct = '⏳ ' + Math.round(p.progress) + '%';
+            if (micBtn)  { micBtn.textContent  = pct; micBtn.disabled  = true; }
+            if (statusEl)  statusEl.textContent = pct;
+          } else if (p.status === 'ready') {
+            if (!currentCycle) setStatus(HF.audioMode ? 'listening' : 'idle');
+          }
+        }).catch(function (err) {
+          console.error('[HF] Model load error:', err);
+          if (!answered) setStatus('idle');
+        });
+      }
     }
 
-    // ── Text input (always present) ──────────────────────────────────────
+    // Text input — always present as typed fallback
     const form = document.createElement('form');
     form.className = 'answer-form';
     form.setAttribute('novalidate', '');
 
     const input = document.createElement('input');
-    input.type = 'text';
-    input.className = 'answer-input';
-    input.placeholder = opts.placeholder || 'Type answer…';
+    input.type           = 'text';
+    input.className      = 'answer-input';
+    input.placeholder    = opts.placeholder  || 'Type answer…';
     input.autocomplete   = 'off';
     input.autocorrect    = 'off';
     input.autocapitalize = 'off';
@@ -238,7 +397,7 @@
     input.setAttribute('inputmode', opts.inputmode || 'text');
 
     const submitBtn = document.createElement('button');
-    submitBtn.type = 'submit';
+    submitBtn.type      = 'submit';
     submitBtn.className = 'btn-submit';
     submitBtn.textContent = 'Submit';
 
@@ -251,60 +410,164 @@
       if (!val) return;
       input.value = '';
       answered = true;
-      // Stop any in-progress SR so the typed answer wins
-      HF.cancelRecognition();
+      if (currentCycle) { currentCycle.stop(); currentCycle = null; _activeCycle = null; }
+      releaseMic();
       onAnswer(val);
     });
 
     container.appendChild(form);
 
-    // ── No-voice notice ──────────────────────────────────────────────────
     if (!HF.VOICE_SUPPORTED) {
       const note = document.createElement('p');
-      note.className = 'voice-unavailable';
-      note.textContent =
-        'Voice input is not available in this browser — type your answer above.';
+      note.className   = 'voice-unavailable';
+      note.textContent = 'Microphone not available in this browser — type your answer above.';
       container.appendChild(note);
     }
 
     return {
-      focus:          function () { input.focus(); },
-      reset:          function () { input.value = ''; },
-      startListening: doStartListening,
+      focus: function () { input.focus(); },
+      reset: function () {
+        input.value  = '';
+        answered     = false;
+        if (currentCycle) { currentCycle.stop(); currentCycle = null; _activeCycle = null; }
+        releaseMic();
+        setStatus(HF.WHISPER_READY ? 'idle' : '⏳ Loading…');
+      },
+      startListening: beginListening,
     };
   };
 
-  // ── Lightweight game-state helper ────────────────────────────────────────
-  /**
-   * Simple score/streak tracker.
-   * Usage:
-   *   const gs = HF.GameState();
-   *   gs.correct();  gs.wrong();
-   *   gs.score       gs.streak     gs.total
-   */
+  // ── GameState ────────────────────────────────────────────────────────────
+
   HF.GameState = function () {
     return {
-      score:  0,
-      streak: 0,
-      total:  0,
-
-      correct: function () {
-        this.score++;
-        this.streak++;
-        this.total++;
-      },
-
-      wrong: function () {
-        this.streak = 0;
-        this.total++;
-      },
-
+      score: 0, streak: 0, total: 0,
+      correct:  function () { this.score++; this.streak++; this.total++; },
+      wrong:    function () { this.streak = 0; this.total++; },
       accuracy: function () {
-        return this.total === 0
-          ? 0
-          : Math.round((this.score / this.total) * 100);
+        return this.total === 0 ? 0 : Math.round((this.score / this.total) * 100);
       },
     };
   };
 
-})();
+}());
+/*
+ *
+ * Speech recognition runs entirely in the browser via Whisper (no audio
+ * sent to any server). The model (~40 MB quantized) is downloaded once on
+ * first mic use and cached in the browser's Cache Storage indefinitely.
+ *
+ * UX: push-to-talk — hold 🎤 while speaking, release to transcribe (~1–2 s).
+ *
+ * Exposes the same HF global API as before:
+ *   HF.speak(text, opts)
+ *   HF.speakThen(text, cb, opts)
+ *   HF.cancelSpeech()
+ *   HF.VOICE_SUPPORTED        — true when MediaRecorder is available
+ *   HF.WHISPER_READY          — true once the model is loaded
+ *   HF.audioMode              — controls TTS read-aloud of questions
+ *   HF.setAudioMode(bool)
+ *   HF.cancelRecognition()
+ *   HF.renderAudioToggle(container)
+ *   HF.createInputUI(el, cb, opts)
+ *   HF.GameState()
+ */
+(function () {
+  'use strict';
+
+  const HF = window.HF = window.HF || {};
+
+  // ── Text-to-Speech ──────────────────────────────────────────────────────
+
+  HF.speak = function (text, opts) {
+    if (!window.speechSynthesis) return null;
+    window.speechSynthesis.cancel();
+    const utt = new SpeechSynthesisUtterance(text);
+    if (opts) {
+      if (opts.rate   !== undefined) utt.rate   = opts.rate;
+      if (opts.pitch  !== undefined) utt.pitch  = opts.pitch;
+      if (opts.volume !== undefined) utt.volume = opts.volume;
+    }
+    window.speechSynthesis.speak(utt);
+    return utt;
+  };
+
+  HF.cancelSpeech = function () {
+    if (window.speechSynthesis) window.speechSynthesis.cancel();
+  };
+
+  HF.speakThen = function (text, cb, opts) {
+    if (!window.speechSynthesis) { if (cb) setTimeout(cb, 50); return null; }
+    window.speechSynthesis.cancel();
+    const utt = new SpeechSynthesisUtterance(text);
+    if (opts) {
+      if (opts.rate   !== undefined) utt.rate   = opts.rate;
+      if (opts.pitch  !== undefined) utt.pitch  = opts.pitch;
+      if (opts.volume !== undefined) utt.volume = opts.volume;
+    }
+    if (cb) {
+      let fired = false;
+      const once = function () { if (!fired) { fired = true; cb(); } };
+      utt.onend = utt.onerror = once;
+      setTimeout(once, Math.max(1200, Math.round(text.length / 5 / 150 * 60000) + 800));
+    }
+    window.speechSynthesis.speak(utt);
+    return utt;
+  };
+
+  // ── Whisper config ──────────────────────────────────────────────────────
+
+  // @xenova/transformers v2 — stable, well-tested CDN build
+  const TRANSFORMERS_URL = 'https://cdn.jsdelivr.net/npm/@xenova/transformers@2.17.2';
+  // Quantized whisper-tiny English-only: ~40 MB, cached after first download
+  const MODEL_ID = 'Xenova/whisper-tiny.en';
+
+  HF.VOICE_SUPPORTED = !!(navigator.mediaDevices && window.MediaRecorder);
+  HF.WHISPER_READY   = false;
+  HF.audioMode       = localStorage.getItem('hf_audiomode') !== 'off';
+
+  HF.setAudioMode = function (val) {
+    HF.audioMode = !!val;
+    localStorage.setItem('hf_audiomode', val ? 'on' : 'off');
+  };
+
+  // ── Model loading ───────────────────────────────────────────────────────
+  // Shared across all game pages in a session: model is only ever fetched
+  // once per browser session (and cached on disk after first download).
+
+  let _pipe        = null;
+  let _pipePromise = null;
+  let _progressCbs = [];
+
+  function _notifyProgress(p) {
+    _progressCbs.forEach(function (cb) { try { cb(p); } catch (_) {} });
+  }
+
+  function loadModel(onProgress) {
+    if (onProgress) _progressCbs.push(onProgress);
+    if (_pipe) {
+      if (onProgress) onProgress({ status: 'ready' });
+      return Promise.resolve(_pipe);
+    }
+    if (_pipePromise) return _pipePromise;
+
+    _pipePromise = import(TRANSFORMERS_URL)
+      .then(function (mod) {
+        mod.env.useBrowserCache  = true;   // cache weights in browser Cache Storage
+        mod.env.allowLocalModels = false;
+        return mod.pipeline('automatic-speech-recognition', MODEL_ID, {
+          quantized: true,
+          progress_callback: _notifyProgress,
+        });
+      })
+      .then(function (pipe) {
+        _pipe = pipe;
+        HF.WHISPER_READY = true;
+        _notifyProgress({ status: 'ready' });
+        return pipe;
+      });
+
+    return _pipePromise;
+  }
+
+}());

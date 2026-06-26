@@ -1,3 +1,12 @@
+// ── Service worker — enables SharedArrayBuffer on GitHub Pages ────────────
+// Injects COOP/COEP headers via SW so multithreaded WASM (Whisper) works.
+// The SW only needs to be registered once; subsequent page loads get the
+// headers automatically. On first install the SW reloads the page once.
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.register('/coi-serviceworker.js', { scope: '/' })
+    .catch(function () { /* non-fatal — Whisper falls back to single-threaded WASM */ });
+}
+
 // ── Prevent theme flash (runs immediately, before paint) ──────────────────
 (function () {
   var t = localStorage.getItem('theme');
