@@ -82,7 +82,7 @@
 
   // ── Whisper + VAD config ─────────────────────────────────────────────────
 
-  const TRANSFORMERS_URL  = 'https://cdn.jsdelivr.net/npm/@xenova/transformers@2.17.2/dist/transformers.min.js';
+  const TRANSFORMERS_URL  = 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3';
   const MODEL_ID          = 'Xenova/whisper-tiny.en';
   const VAD_THRESHOLD     = 0.015;  // RMS level above which audio counts as speech
   const VAD_SILENCE_MS    = 800;    // ms of silence after speech → trigger transcription
@@ -113,14 +113,12 @@
     _pipePromise = import(TRANSFORMERS_URL)
       .then(function (mod) {
         mod.env.allowLocalModels = false;
-        // Cache API requires a secure context; falls back gracefully on plain HTTP dev servers.
-        try {
-          mod.env.useBrowserCache = true;
-        } catch (_) {
-          mod.env.useBrowserCache = false;
-        }
+        try { mod.env.useBrowserCache = true; } catch (_) { mod.env.useBrowserCache = false; }
+        // Force single-threaded WASM — avoids a silent inference failure that
+        // occurs in multi-threaded mode under COOP/COEP headers (SharedArrayBuffer
+        // active). Single-threaded is slightly slower but produces correct output.
+        try { mod.env.backends.onnx.wasm.numThreads = 1; } catch (_) {}
         return mod.pipeline('automatic-speech-recognition', MODEL_ID, {
-          quantized: true,
           progress_callback: _notifyProgress,
         });
       })
@@ -250,11 +248,7 @@
 
             return loadModel().then(function (pipe) {
               return pipe(pcm, {
-                language: 'english',
-                task: 'transcribe',
                 return_timestamps: false,
-                no_speech_threshold: 0.99,    // raise from default 0.6 — suppress less
-                condition_on_previous_text: false,
               });
             });
           })
