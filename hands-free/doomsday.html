@@ -181,6 +181,8 @@
       const ui = HF.createInputUI(inputArea, checkAnswer, {
         placeholder: 'e.g. Monday',
         inputmode:   'text',
+        vocab: ['monday','tuesday','wednesday','thursday','friday','saturday','sunday',
+                'mon','tue','wed','thu','fri','sat','sun'],
       });
       HF.speakThen('What day of the week is ' + dateStr + '?', function () {
         ui.startListening();

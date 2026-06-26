@@ -140,6 +140,54 @@
     if (_activeCycle) { _activeCycle.stop(); _activeCycle = null; }
   };
 
+  // ── Vocab logits processor ───────────────────────────────────────────────
+  // Builds a whitelist of BPE token IDs from an allowed-words array. When
+  // passed to the pipeline as `logits_processor`, the decoder can only emit
+  // tokens from the whitelist — preventing hallucinations like "Thank You"
+  // when the only valid answers are "zero" and "one".
+  function _buildVocabProcessor(vocab, pipe) {
+    var tokenizer = pipe.tokenizer;
+    if (!tokenizer) return null;
+
+    var allowed = new Set();
+    // Always allow EOS so generation can terminate cleanly.
+    // Whisper-tiny.en EOS = 50256; fall back if the property is absent.
+    var eos = (tokenizer.eos_token_id != null) ? Number(tokenizer.eos_token_id) : 50256;
+    allowed.add(eos);
+
+    function addText(text) {
+      if (!text) return;
+      try {
+        // @huggingface/transformers v3: tokenizer(text, opts) → { input_ids: Tensor }
+        var out = tokenizer(text, { add_special_tokens: false });
+        var ids = (out && out.input_ids) ? out.input_ids.data : out;
+        for (var i = 0; i < ids.length; i++) allowed.add(Number(ids[i]));
+      } catch (_) {}
+    }
+
+    vocab.forEach(function (phrase) {
+      // Encode with/without leading space (GPT-2 BPE convention) and common
+      // capitalisation variants so we catch Whisper's usual word boundaries.
+      var low = String(phrase).toLowerCase();
+      var cap = low.charAt(0).toUpperCase() + low.slice(1);
+      [low, ' ' + low, cap, ' ' + cap, phrase, ' ' + phrase].forEach(addText);
+    });
+
+    console.log('[HF] vocab processor built:', allowed.size, 'allowed token IDs');
+    return {
+      _call: function (inputIds, scores) {
+        // scores is a Tensor with shape [batch, vocab_size].
+        // Mask every disallowed position to -Infinity.
+        var data = scores.data;
+        var vocabSize = scores.dims[scores.dims.length - 1];
+        for (var i = 0; i < data.length; i++) {
+          if (!allowed.has(i % vocabSize)) data[i] = -Infinity;
+        }
+        return scores;
+      },
+    };
+  }
+
   // ── VAD recording cycle ──────────────────────────────────────────────────
   // One cycle = listen until utterance detected → transcribe → call onResult.
   // The caller is responsible for restarting if onResult returns null.
@@ -147,9 +195,10 @@
   // @param {MediaStream}   stream
   // @param {function(?string)} onResult   — called with transcript or null
   // @param {function(string)}  onStatus   — 'listening'|'speaking'|'thinking'
+  // @param {Object}        [extraPipeOpts] — merged into pipeline options
   // @returns {{ stop() }}
 
-  function startCycle(stream, onResult, onStatus) {
+  function startCycle(stream, onResult, onStatus, extraPipeOpts) {
     let active       = true;
     let isSpeaking   = false;
     let silenceStart = null;
@@ -247,9 +296,8 @@
             console.log('[HF] PCM RMS:', rms.toFixed(4), '(~0 = silence, ~0.1+ = speech)');
 
             return loadModel().then(function (pipe) {
-              return pipe(pcm, {
-                return_timestamps: false,
-              });
+              var pipeOpts = Object.assign({ return_timestamps: false }, extraPipeOpts || {});
+              return pipe(pcm, pipeOpts);
             });
           })
           .then(function (result) {
@@ -333,6 +381,15 @@
     let micBtn       = null;
     let statusEl     = null;
 
+    // Vocab logits processor — built once after model loads, reused each cycle.
+    let _vocabProc = null;
+    const _vocab   = opts.vocab || null;
+    if (_vocab && _vocab.length) {
+      loadModel().then(function (pipe) {
+        _vocabProc = _buildVocabProcessor(_vocab, pipe);
+      });
+    }
+
     // ── Status helper ─────────────────────────────────────────────────────
     // Accepts canonical state keys or raw label strings (e.g. '⏳ 45%')
     function setStatus(s) {
@@ -366,6 +423,7 @@
     // Starts a VAD cycle on `stream`. On empty/noise result, restarts
     // immediately on the same stream. On valid transcript, fires onAnswer.
     function listenOnStream(stream) {
+      const extraPipeOpts = _vocabProc ? { logits_processor: [_vocabProc] } : null;
       currentCycle = startCycle(stream, function onResult(transcript) {
         currentCycle = null;
         _activeCycle = null;
@@ -384,7 +442,7 @@
             }, 200);
           }
         }
-      }, setStatus);
+      }, setStatus, extraPipeOpts);
       _activeCycle = currentCycle;
     }
 

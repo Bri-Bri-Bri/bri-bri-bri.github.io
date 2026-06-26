@@ -306,6 +306,14 @@
       const ui = HF.createInputUI(inputArea, checkAnswer, {
         placeholder: 'e.g. (3+5)*(1+2)',
         inputmode: 'text',
+        vocab: [
+          '0','1','2','3','4','5','6','7','8','9','10','11','12','13',
+          'zero','one','two','three','four','five','six','seven','eight',
+          'nine','ten','eleven','twelve','thirteen',
+          'plus','minus','times','over','divided','by','multiply','add','subtract','and',
+          'open','close','left','right','paren','bracket',
+          '+','-','*','/','(',')','x',
+        ],
       });
       HF.speakThen('Make 24 with ' + nums.join(', '), function () {
         ui.startListening();

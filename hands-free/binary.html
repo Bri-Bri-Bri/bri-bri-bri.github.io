@@ -148,9 +148,17 @@
       }
 
       inputArea.innerHTML = '';
+      const bin2decVocab = [
+        '0','1','2','3','4','5','6','7','8','9',
+        'zero','one','two','three','four','five','six','seven','eight','nine',
+        'ten','eleven','twelve','thirteen','fourteen','fifteen','sixteen',
+        'seventeen','eighteen','nineteen','twenty','thirty','forty','fifty',
+        'sixty','seventy','eighty','ninety','hundred','and','oh',
+      ];
       const ui = HF.createInputUI(inputArea, checkAnswer, {
         placeholder: mode === 'dec2bin' ? 'e.g. 1010' : 'e.g. 10',
         inputmode:   'text',
+        vocab: mode === 'dec2bin' ? ['0','1','zero','one'] : bin2decVocab,
       });
       HF.speakThen(qText, function () {
         ui.startListening();
