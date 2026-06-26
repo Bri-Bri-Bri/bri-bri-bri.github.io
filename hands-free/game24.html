@@ -106,13 +106,41 @@
     // since we validate the character set before calling Function()).
 
     function safeEval(expr) {
-      // Normalise spoken words to symbols
+      // Normalise spoken words to symbols.
+      // Multi-word phrases first, then single words, then symbols.
       const normalised = expr
-        .replace(/\btimes\b/gi, '*')
+        // parentheses — all common spoken forms
+        .replace(/open\s*paren(?:thesis)?/gi,    '(')
+        .replace(/close\s*paren(?:thesis)?/gi,   ')')
+        .replace(/left\s*paren(?:thesis)?/gi,    '(')
+        .replace(/right\s*paren(?:thesis)?/gi,   ')')
+        .replace(/opening\s*paren(?:thesis)?/gi, '(')
+        .replace(/closing\s*paren(?:thesis)?/gi, ')')
+        .replace(/open\s*bracket/gi,    '(')
+        .replace(/close\s*bracket/gi,   ')')
+        .replace(/left\s*bracket/gi,    '(')
+        .replace(/right\s*bracket/gi,   ')')
+        // number words 1–13 (covers full card range; longest first to avoid partial matches)
+        .replace(/\bthirteen\b/gi, '13')
+        .replace(/\btwelve\b/gi,   '12')
+        .replace(/\beleven\b/gi,   '11')
+        .replace(/\bten\b/gi,      '10')
+        .replace(/\bnine\b/gi,     '9')
+        .replace(/\beight\b/gi,    '8')
+        .replace(/\bseven\b/gi,    '7')
+        .replace(/\bsix\b/gi,      '6')
+        .replace(/\bfive\b/gi,     '5')
+        .replace(/\bfour\b/gi,     '4')
+        .replace(/\bthree\b/gi,    '3')
+        .replace(/\btwo\b/gi,      '2')
+        .replace(/\bone\b/gi,      '1')
+        // operators — multi-word before single
         .replace(/\bmultiplied by\b/gi, '*')
-        .replace(/\bdivided by\b/gi, '/')
-        .replace(/\bplus\b/gi,  '+')
-        .replace(/\bminus\b/gi, '-')
+        .replace(/\bdivided by\b/gi,   '/')
+        .replace(/\btimes\b/gi,  '*')
+        .replace(/\bover\b/gi,   '/')
+        .replace(/\bplus\b/gi,   '+')
+        .replace(/\bminus\b/gi,  '-')
         .replace(/×/g, '*')
         .replace(/÷/g, '/');
 

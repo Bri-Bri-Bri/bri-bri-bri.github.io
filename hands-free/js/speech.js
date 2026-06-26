@@ -28,13 +28,18 @@
 
   const HF = window.HF = window.HF || {};
 
-  // Filter ONNX "Removing initializer" noise. Installed before any import()
-  // so onnxruntime-web captures our patched reference when it loads.
+  // Filter noisy ONNX/transformers console.warn messages. Installed before
+  // any import() so onnxruntime-web captures our patched reference when it
+  // loads. The try/catch on apply avoids a Firefox "operation is insecure"
+  // DOMException that can fire in certain cross-origin security contexts.
   var _origConsoleWarn = console.warn;
+  var _WARN_FILTERS = ['Removing initializer', 'content-length'];
   console.warn = function () {
     var msg = String(arguments[0] || '');
-    if (msg.indexOf('Removing initializer') !== -1) return;
-    return _origConsoleWarn.apply(console, arguments);
+    for (var i = 0; i < _WARN_FILTERS.length; i++) {
+      if (msg.indexOf(_WARN_FILTERS[i]) !== -1) return;
+    }
+    try { return _origConsoleWarn.apply(console, arguments); } catch (_) {}
   };
 
   // ── TTS ─────────────────────────────────────────────────────────────────
@@ -77,7 +82,7 @@
 
   // ── Whisper + VAD config ─────────────────────────────────────────────────
 
-  const TRANSFORMERS_URL  = 'https://cdn.jsdelivr.net/npm/@xenova/transformers@2.17.2';
+  const TRANSFORMERS_URL  = 'https://cdn.jsdelivr.net/npm/@xenova/transformers@2.17.2/dist/transformers.min.js';
   const MODEL_ID          = 'Xenova/whisper-tiny.en';
   const VAD_THRESHOLD     = 0.015;  // RMS level above which audio counts as speech
   const VAD_SILENCE_MS    = 800;    // ms of silence after speech → trigger transcription

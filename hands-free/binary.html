@@ -159,8 +159,11 @@
     }
 
     function normalise(raw) {
-      // Strip spaces, underscores (common grouping separators)
-      return raw.replace(/[\s_]/g, '').toLowerCase();
+      return raw
+        .toLowerCase()
+        .replace(/\bzero\b/g, '0')   // spoken digit words → symbols
+        .replace(/\bone\b/g,  '1')
+        .replace(/[\s_,'`\.]/g, '');    // strip spaces, commas, grouping chars
     }
 
     function checkAnswer(raw) {

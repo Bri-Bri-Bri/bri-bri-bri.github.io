@@ -200,8 +200,12 @@
     };
 
     function parseDay(raw) {
-      const key = raw.toLowerCase().trim().replace(/[^a-z]/g, '');
-      return DAY_ALIASES.hasOwnProperty(key) ? DAY_ALIASES[key] : -1;
+      // Scan each word so filler from the recogniser ("uh Wednesday") is ignored
+      const words = raw.toLowerCase().replace(/[^a-z\s]/g, '').trim().split(/\s+/);
+      for (const word of words) {
+        if (DAY_ALIASES.hasOwnProperty(word)) return DAY_ALIASES[word];
+      }
+      return -1;
     }
 
     function checkAnswer(raw) {

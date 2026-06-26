@@ -1,0 +1,12 @@
+#!/bin/sh
+# Bump SW cache version to a timestamp on every commit so browsers
+# pick up new assets immediately after a push to GitHub Pages.
+
+VERSION="v$(date -u +%Y%m%d%H%M%S)"
+
+for SW in hands-free/sw.js coi-serviceworker.js; do
+  if [ -f "$SW" ]; then
+    sed -i '' "s/CACHE_VERSION = '[^']*'/CACHE_VERSION = '${VERSION}'/" "$SW"
+    git add "$SW"
+  fi
+done
