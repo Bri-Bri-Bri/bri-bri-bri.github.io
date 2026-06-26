@@ -182,11 +182,11 @@
     let speechChunks   = [];   // chunks from speech onset onward
     let recordingSpeech = false;
     mr.ondataavailable = function (ev) {
-      if (!ev.data.size || !active) return;
+      if (!ev.data.size) return;          // note: !active removed — we need the final flush
       if (!headerChunk) { headerChunk = ev.data; return; } // save header, don't route it
       if (recordingSpeech) {
         speechChunks.push(ev.data);
-      } else {
+      } else if (active) {               // only roll pre-buffer while actively listening
         preBuffer.push(ev.data);
         if (preBuffer.length > PRE_BUFFER_CHUNKS) preBuffer.shift();
       }
@@ -209,25 +209,62 @@
       }
 
       onStatus('thinking');
-      const capturedChunks = allChunks;
       mr.onstop = function () {
+        // Build blob HERE so mr.stop()'s final ondataavailable flush is included.
+        const capturedChunks = (headerChunk ? [headerChunk] : []).concat(preBuffer).concat(speechChunks);
         const blob = new Blob(capturedChunks, { type: mr.mimeType || 'audio/webm' });
-        const url  = URL.createObjectURL(blob);
-        loadModel()
-          .then(function (pipe) {
-            return pipe(url, {
-              language: 'english',
-              task: 'transcribe',
-              return_timestamps: false,  // skip timestamp decode — faster
+        console.log('[HF] audio:', blob.size + 'B,', speechChunks.length, 'speech +', preBuffer.length, 'pre-buffer chunks');
+        if (blob.size < 500) { onResult(null); return; }
+
+        // Decode the blob → resample to 16 kHz → pass Float32 PCM directly to
+        // Whisper. This avoids the URL-fetch path whose decode can silently fail
+        // (returning near-silence that Whisper suppresses as no-speech), and it
+        // guarantees the model receives audio at the exact sample rate it expects.
+        blob.arrayBuffer()
+          .then(function (ab) {
+            var decCtx = new AudioContext();
+            return decCtx.decodeAudioData(ab).then(function (buf) {
+              decCtx.close();
+              return buf;
+            });
+          })
+          .then(function (audioBuf) {
+            var srcRate = audioBuf.sampleRate;
+            console.log('[HF] decoded:', audioBuf.duration.toFixed(2) + 's @', srcRate + 'Hz');
+            if (srcRate === 16000) return Promise.resolve(audioBuf.getChannelData(0));
+            // Resample to 16 kHz (Whisper's native rate) via OfflineAudioContext
+            var outLen = Math.round(audioBuf.length * 16000 / srcRate);
+            var offCtx = new OfflineAudioContext(1, outLen, 16000);
+            var src    = offCtx.createBufferSource();
+            src.buffer = audioBuf;
+            src.connect(offCtx.destination);
+            src.start(0);
+            return offCtx.startRendering().then(function (r) { return r.getChannelData(0); });
+          })
+          .then(function (pcm) {
+            // Sanity-check: log RMS so we can confirm audio is not silent
+            var rmsSum = 0;
+            for (var i = 0; i < pcm.length; i++) rmsSum += pcm[i] * pcm[i];
+            var rms = Math.sqrt(rmsSum / pcm.length);
+            console.log('[HF] PCM RMS:', rms.toFixed(4), '(~0 = silence, ~0.1+ = speech)');
+
+            return loadModel().then(function (pipe) {
+              return pipe(pcm, {
+                language: 'english',
+                task: 'transcribe',
+                return_timestamps: false,
+                no_speech_threshold: 0.99,    // raise from default 0.6 — suppress less
+                condition_on_previous_text: false,
+              });
             });
           })
           .then(function (result) {
-            URL.revokeObjectURL(url);
-            const transcript = (result.text || '').trim();
+            console.log('[HF] raw result:', JSON.stringify(result));
+            var transcript = (result.text || '').trim();
             console.log('[HF] transcript:', JSON.stringify(transcript));
             onResult(transcript);
           })
-          .catch(function (err)  { console.error('[HF] transcription error:', err); URL.revokeObjectURL(url); onResult(null); });
+          .catch(function (err) { console.error('[HF] transcription error:', err); onResult(null); });
       };
       try { mr.stop(); } catch (_) { onResult(null); }
     }
