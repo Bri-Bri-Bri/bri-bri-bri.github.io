@@ -28,6 +28,15 @@
 
   const HF = window.HF = window.HF || {};
 
+  // Filter ONNX "Removing initializer" noise. Installed before any import()
+  // so onnxruntime-web captures our patched reference when it loads.
+  var _origConsoleWarn = console.warn;
+  console.warn = function () {
+    var msg = String(arguments[0] || '');
+    if (msg.indexOf('Removing initializer') !== -1) return;
+    return _origConsoleWarn.apply(console, arguments);
+  };
+
   // ── TTS ─────────────────────────────────────────────────────────────────
 
   HF.speak = function (text, opts) {
@@ -96,21 +105,6 @@
     if (_pipe) { if (onProgress) onProgress({ status: 'ready' }); return Promise.resolve(_pipe); }
     if (_pipePromise) return _pipePromise;
 
-    // Suppress ONNX Runtime "Removing initializer" spam during model load.
-    // These are benign graph-cleanup messages emitted by onnxruntime-web.
-    var _origWarn = console.warn;
-    var _warnSeen = {};
-    console.warn = function () {
-      var msg = String(arguments[0] || '');
-      if (msg.indexOf('Removing initializer') !== -1) {
-        // Log each unique initializer name once, then suppress repeats
-        var key = msg.slice(0, 80);
-        if (!_warnSeen[key]) { _warnSeen[key] = true; _origWarn('[HF] (suppressing ONNX duplicates) ' + key); }
-        return;
-      }
-      _origWarn.apply(console, arguments);
-    };
-
     _pipePromise = import(TRANSFORMERS_URL)
       .then(function (mod) {
         mod.env.allowLocalModels = false;
@@ -126,16 +120,12 @@
         });
       })
       .then(function (pipe) {
-        console.warn = _origWarn; // restore after load
         _pipe = pipe;
         HF.WHISPER_READY = true;
         _notifyProgress({ status: 'ready' });
         return pipe;
       })
-      .catch(function (err) {
-        console.warn = _origWarn; // always restore
-        throw err;
-      });
+      .catch(function (err) { throw err; });
     return _pipePromise;
   }
 
