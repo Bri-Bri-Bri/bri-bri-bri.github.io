@@ -174,17 +174,16 @@
     });
 
     console.log('[HF] vocab processor built:', allowed.size, 'allowed token IDs');
-    return {
-      _call: function (inputIds, scores) {
-        // scores is a Tensor with shape [batch, vocab_size].
-        // Mask every disallowed position to -Infinity.
-        var data = scores.data;
-        var vocabSize = scores.dims[scores.dims.length - 1];
-        for (var i = 0; i < data.length; i++) {
-          if (!allowed.has(i % vocabSize)) data[i] = -Infinity;
-        }
-        return scores;
-      },
+    // v3 LogitsProcessorList calls each processor as a plain function:
+    //   scores = processor(inputIds, scores)
+    // Returning a plain object with ._call() is not callable — return a function.
+    return function vocabLogitsProcessor(inputIds, scores) {
+      var data = scores.data;
+      var vocabSize = scores.dims[scores.dims.length - 1];
+      for (var i = 0; i < data.length; i++) {
+        if (!allowed.has(i % vocabSize)) data[i] = -Infinity;
+      }
+      return scores;
     };
   }
 
