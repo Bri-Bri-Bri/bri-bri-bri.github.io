@@ -1,0 +1,35 @@
+<!-- Hands-Free Games app icon — brain with lightning bolt -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <!-- Background -->
+  <rect width="512" height="512" rx="96" fill="#3b82f6"/>
+  <!-- Brain outline (two hemispheres) -->
+  <g fill="none" stroke="#ffffff" stroke-width="20" stroke-linecap="round" stroke-linejoin="round">
+    <!-- Left hemisphere -->
+    <path d="M256 170
+             C256 170 200 155 175 185
+             C150 215 148 245 160 268
+             C148 278 142 298 155 315
+             C145 330 150 355 170 362
+             C185 368 210 365 225 355
+             C238 362 248 365 256 365"/>
+    <!-- Right hemisphere -->
+    <path d="M256 170
+             C256 170 312 155 337 185
+             C362 215 364 245 352 268
+             C364 278 370 298 357 315
+             C367 330 362 355 342 362
+             C327 368 302 365 287 355
+             C274 362 264 365 256 365"/>
+    <!-- Center divider -->
+    <line x1="256" y1="170" x2="256" y2="365"/>
+    <!-- Folds left -->
+    <path d="M200 220 C210 235 205 255 195 265"/>
+    <path d="M185 280 C198 288 196 305 184 312"/>
+    <!-- Folds right -->
+    <path d="M312 220 C302 235 307 255 317 265"/>
+    <path d="M327 280 C314 288 316 305 328 312"/>
+  </g>
+  <!-- Lightning bolt (voice/audio symbol) -->
+  <path d="M268 148 L238 258 L262 258 L244 364 L296 232 L270 232 Z"
+        fill="#fbbf24" stroke="#ffffff" stroke-width="6" stroke-linejoin="round"/>
+</svg>
