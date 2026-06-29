@@ -399,6 +399,7 @@
       const ui = HF.createInputUI(inputArea, checkAnswer, {
         placeholder: ph,
         inputmode:   dirMode === 'reverse' ? 'numeric' : 'text',
+        vocab: buildPAOVocab(quizMode, dirMode),
       });
       HF.speakThen(qText, function () {
         ui.startListening();
@@ -437,6 +438,7 @@
       const ui = HF.createInputUI(inputArea, checkSceneAnswer, {
         placeholder: 'e.g. Stuart Little laughing at a broken TV',
         inputmode: 'text',
+        vocab: buildPAOVocab('scene', 'forward'),
       });
       HF.speakThen(qText, function () {
         ui.startListening();
@@ -517,6 +519,62 @@
       if (w.endsWith('es')  && w.length > 3) return w.slice(0, -2);
       if (w.endsWith('s')   && w.length > 3) return w.slice(0, -1);
       return w;
+    }
+
+    function buildPAOVocab(mode, dir) {
+      // Reverse mode: user answers with a number
+      if (dir === 'reverse') {
+        return [
+          '0','1','2','3','4','5','6','7','8','9',
+          'zero','one','two','three','four','five','six','seven','eight','nine',
+          'ten','eleven','twelve','thirteen','fourteen','fifteen','sixteen',
+          'seventeen','eighteen','nineteen','twenty','thirty','forty','fifty',
+          'sixty','seventy','eighty','ninety','hundred','and','oh',
+        ];
+      }
+
+      const words = [];
+
+      function addField(value, isAction) {
+        if (!value) return;
+        words.push(value);
+        if (!isAction) return;
+        // Add common inflections so the model can naturally output "strutting"
+        // or "strutted" without those tokens being blocked.
+        const base = value.replace(/^to\s+/i, '').toLowerCase().trim();
+        const s = stem(base);
+        words.push(base, s, s + 'ing', s + 'ed', s + 's');
+        // CVC doubling before -ing/-ed: strut → strutting, sit → sitting
+        const lc = s[s.length - 1];
+        const vowels = 'aeiou';
+        if (s.length >= 3 && !vowels.includes(lc) &&
+            vowels.includes(s[s.length - 2]) && !vowels.includes(s[s.length - 3])) {
+          words.push(s + lc + 'ing', s + lc + 'ed');
+        }
+      }
+
+      if (mode === 'person' || mode === 'scene') {
+        paoData.forEach(function (e) { addField(e.person, false); });
+      }
+      if (mode === 'action' || mode === 'scene') {
+        paoData.forEach(function (e) { addField(e.action, true); });
+      }
+      if (mode === 'object' || mode === 'scene') {
+        paoData.forEach(function (e) { addField(e.object, false); });
+      }
+
+      // Allow stop words so natural connective tissue survives transcription.
+      // matchField strips these before comparing, so they don't affect scoring.
+      STOP_WORDS.forEach(function (w) { words.push(w); });
+
+      // A few common prepositions/scene words not already in STOP_WORDS
+      ['towards','near','against','around','through','over',
+       'under','behind','front','between','while','using',
+       'across','along','inside','outside','onto'].forEach(function (w) {
+        words.push(w);
+      });
+
+      return words;
     }
 
     function normPAO(s) {
