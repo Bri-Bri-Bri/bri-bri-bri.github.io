@@ -304,6 +304,7 @@
     document.getElementById('change-csv-btn').addEventListener('click', function () {
       gameScreen.classList.add('hidden');
       loadScreen.classList.remove('hidden');
+      initLoadScreen();
     });
 
     function loadData(csvText, save) {
@@ -452,11 +453,8 @@
       const objectOk = matchField(e[2].object, raw);
       const correct  = personOk && actionOk && objectOk;
 
-      // Build canonical scene string for display / TTS
-      const canonicalScene =
-        e[0].person + ' ' +
-        (e[1].action || '') + ' ' +
-        (e[2].object ? 'a ' + e[2].object : '');
+      const answerLabel = [e[0].person, e[1].action, e[2].object]
+        .filter(Boolean).join(' | ');
 
       if (correct) {
         gs.correct();
@@ -464,22 +462,22 @@
         HF.speak('Correct!');
       } else {
         gs.wrong();
-        showFeedback(false, 'Wrong. The scene was: ' + canonicalScene.trim());
-        HF.speak('Incorrect. The scene was: ' + canonicalScene.trim());
-        revealScene(e, canonicalScene.trim());
+        showFeedback(false, 'Wrong. The answer was: ' + answerLabel);
+        HF.speak('Incorrect. The answer was: ' +
+          [e[0].person, e[1].action, e[2].object].filter(Boolean).join(', '));
+        revealScene(e);
       }
 
       updateScore();
       scheduleNext(correct ? 2000 : 5000);
     }
 
-    function revealScene(entries, scene) {
+    function revealScene(entries) {
       answerFields.innerHTML = '';
       const rows = [
         [fmtNum(entries[0].number) + ' (Person)', entries[0].person],
         [fmtNum(entries[1].number) + ' (Action)', entries[1].action],
         [fmtNum(entries[2].number) + ' (Object)', entries[2].object],
-        ['Scene', scene],
       ];
       rows.forEach(function (pair) {
         if (!pair[1]) return;
