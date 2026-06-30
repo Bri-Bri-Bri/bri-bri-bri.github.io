@@ -447,6 +447,7 @@
 
     // ── Entry point (called by game after TTS, or by button click) ────────
     function beginListening() {
+      if (!HF.audioMode) return;   // keyboard mode — user must click the mic button
       if (answered || currentCycle) return;
 
       // Defer until model is ready so "thinking" doesn't stall on first use
