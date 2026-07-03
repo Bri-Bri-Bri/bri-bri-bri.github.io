@@ -1,14 +1,19 @@
 import LichessPgnViewer from 'https://esm.sh/@lichess-org/pgn-viewer@2.6.0?bundle';
 import { marked } from 'https://esm.sh/marked@14';
+import { Chess } from 'https://esm.sh/chess.js@1?bundle';
+import { Chessground } from 'https://esm.sh/@lichess-org/chessground?bundle';
 
 // ── State ─────────────────────────────────────────────────────────────────────
 
 const state = {
-  title: 'Untitled Study',
-  cells: [],       // [{ id, type, content } | { id, type, pgn, title, orientation }]
+  studyId:      null,  // currently loaded study
+  title:        '',
+  cells:        [],
+  studiesIndex: [],    // [{ id, title, date, updatedAt }] — metadata only
 };
 
 const viewerInstances = new Map();   // cellId → LichessPgnViewer instance
+const editInstances   = new Map();   // cellId → { chess, ground } when in edit mode
 let autoSaveTimer = null;
 
 // ── IDs ───────────────────────────────────────────────────────────────────────
@@ -53,30 +58,58 @@ function updateCellData(id, patch) {
   scheduleAutoSave();
 }
 
-// ── Auto-save ─────────────────────────────────────────────────────────────────
+// ── Storage ───────────────────────────────────────────────────────────────────
+
+function loadIndex() {
+  try { return JSON.parse(localStorage.getItem('cellular-index') || '[]'); }
+  catch { return []; }
+}
+function saveIndex() {
+  try { localStorage.setItem('cellular-index', JSON.stringify(state.studiesIndex)); } catch {}
+}
+function loadStudyData(id) {
+  try { return JSON.parse(localStorage.getItem('cellular-study-' + id)); } catch { return null; }
+}
+function saveStudyData(id, data) {
+  try { localStorage.setItem('cellular-study-' + id, JSON.stringify(data)); } catch {}
+}
 
 function scheduleAutoSave() {
   clearTimeout(autoSaveTimer);
-  autoSaveTimer = setTimeout(() => {
-    try {
-      localStorage.setItem('cellular-notebook', JSON.stringify({
-        title: state.title,
-        cells: state.cells,
-      }));
-    } catch { /* quota exceeded — silently skip */ }
-  }, 1500);
+  autoSaveTimer = setTimeout(saveCurrentStudy, 1500);
+}
+
+function saveCurrentStudy() {
+  if (!state.studyId) return;
+  saveStudyData(state.studyId, { id: state.studyId, title: state.title, cells: state.cells });
+  const idx = state.studiesIndex.findIndex(s => s.id === state.studyId);
+  if (idx !== -1) {
+    state.studiesIndex[idx].title     = state.title;
+    state.studiesIndex[idx].updatedAt = new Date().toISOString();
+    saveIndex();
+    renderSidebar();
+  }
 }
 
 // ── Board viewer management ───────────────────────────────────────────────────
 
-function mountViewer(cellId, pgn, orientation = 'white') {
-  const container = document.getElementById('viewer-' + cellId);
-  if (!container) return;
+function mountViewer(cellId, pgn, orientation = 'white', showMoves = true) {
+  const cellEl = document.querySelector(`.cell[data-id="${CSS.escape(cellId)}"]`);
+  if (!cellEl) return;
+  const wrap = cellEl.querySelector('.board-viewer-wrap');
+  if (!wrap) return;
 
   // Destroy existing instance if the library supports it
   const existing = viewerInstances.get(cellId);
   if (existing && typeof existing.destroy === 'function') existing.destroy();
-  container.innerHTML = '';
+
+  // Always create a fresh container element — Snabbdom (inside pgn-viewer) patches
+  // the element's attributes and removes any `id` we set, so we can't rely on
+  // getElementById after the first mount.  Starting fresh avoids stale vdom too.
+  wrap.innerHTML = '';
+  const container = document.createElement('div');
+  container.className = 'board-viewer';
+  wrap.appendChild(container);
 
   const instance = LichessPgnViewer(container, {
     pgn: pgn || '',
@@ -84,8 +117,203 @@ function mountViewer(cellId, pgn, orientation = 'white') {
     showCoords: true,
     drawArrows: true,
     scrollToMove: false,
+    showMoves: showMoves ? 'auto' : false,
+    menu: {
+      getPgn: { enabled: false }, // we have our own Export button
+      // analysisBoard + practiceWithComputer stay enabled (open Lichess)
+    },
   });
   viewerInstances.set(cellId, instance);
+}
+
+// ── Board edit mode ───────────────────────────────────────────────────────────
+
+function getLegalMoveDests(chess) {
+  const dests = new Map();
+  chess.moves({ verbose: true }).forEach(m => {
+    if (!dests.has(m.from)) dests.set(m.from, []);
+    dests.get(m.from).push(m.to);
+  });
+  return dests;
+}
+
+function enterEditMode(cellId) {
+  const cell = getCell(cellId);
+  if (!cell) return;
+  const cellEl = document.querySelector(`.cell[data-id="${CSS.escape(cellId)}"]`);
+  if (!cellEl) return;
+  const wrap = cellEl.querySelector('.board-viewer-wrap');
+  if (!wrap) return;
+
+  // Tear down the pgn-viewer
+  const existing = viewerInstances.get(cellId);
+  if (existing && typeof existing.destroy === 'function') existing.destroy();
+  viewerInstances.delete(cellId);
+  wrap.innerHTML = '';
+
+  // Parse PGN — start chessground from the final position of the game
+  const chess = new Chess();
+  try { chess.loadPgn(cell.pgn || ''); } catch { chess.reset(); }
+
+  // Chessground needs a .cg-wrap element
+  const cgWrap = document.createElement('div');
+  cgWrap.className = 'cg-wrap cg-edit-board';
+  wrap.appendChild(cgWrap);
+
+  const ground = Chessground(cgWrap, {
+    fen: chess.fen(),
+    orientation: cell.orientation || 'white',
+    turnColor: chess.turn() === 'w' ? 'white' : 'black',
+    movable: {
+      free: false,
+      color: 'both',
+      dests: getLegalMoveDests(chess),
+      events: {
+        after(from, to) {
+          // Auto-promote to queen (promotion UI is a future enhancement)
+          const move = chess.move({ from, to, promotion: 'q' });
+          if (!move) return;
+
+          const newPgn = chess.pgn();
+          updateCellData(cellId, { pgn: newPgn });
+
+          // Append annotation row for the new move
+          const hist = chess.history({ verbose: true });
+          const last = hist[hist.length - 1];
+          const num  = Math.floor((hist.length - 1) / 2) + 1;
+          const lbl  = last.color === 'w' ? `${num}. ${last.san}` : `${num}… ${last.san}`;
+          appendAnnotationRow(cellId, lbl, chess.fen());
+
+          // Update board for next move
+          ground.set({
+            fen: chess.fen(),
+            turnColor: chess.turn() === 'w' ? 'white' : 'black',
+            movable: { dests: getLegalMoveDests(chess) },
+          });
+        }
+      }
+    },
+    drawable: { enabled: true, visible: true },
+    draggable: { enabled: true },
+    selectable: { enabled: true },
+  });
+
+  editInstances.set(cellId, { chess, ground });
+
+  // Show annotation panel alongside the board
+  cellEl.classList.add('edit-mode');
+  refreshAnnotationPanel(cellId);
+  cellEl.querySelector('.annotation-panel').classList.add('is-visible');
+
+  const btn = cellEl.querySelector('.edit-moves-btn');
+  if (btn) { btn.textContent = '✓ Done'; btn.classList.add('active'); }
+}
+
+function exitEditMode(cellId) {
+  rebuildPgnWithAnnotations(cellId);  // persist any annotations typed this session
+
+  const inst = editInstances.get(cellId);
+  if (inst?.ground?.destroy) inst.ground.destroy();
+  editInstances.delete(cellId);
+
+  const cellEl = document.querySelector(`.cell[data-id="${CSS.escape(cellId)}"]`);
+  if (cellEl) {
+    cellEl.classList.remove('edit-mode');
+    cellEl.querySelector('.annotation-panel').classList.remove('is-visible');
+  }
+
+  const cell = getCell(cellId);
+  mountViewer(cellId, cell.pgn, cell.orientation, true);
+
+  const btn = cellEl?.querySelector('.edit-moves-btn');
+  if (btn) { btn.textContent = '✏ Edit'; btn.classList.remove('active'); }
+}
+
+// ── Annotations ───────────────────────────────────────────────────────────────
+
+// Append one row (called after each new move in edit mode)
+function appendAnnotationRow(cellId, label, fen) {
+  const cellEl = document.querySelector(`.cell[data-id="${CSS.escape(cellId)}"]`);
+  const list   = cellEl?.querySelector('.annotation-list');
+  if (!list) return;
+  list.querySelector('.annotation-panel-empty')?.remove();
+  _addRowToList(list, cellId, label, fen, '');
+  list.lastElementChild?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+}
+
+// Rebuild the full annotation list from the cell's current PGN
+function refreshAnnotationPanel(cellId) {
+  const cell   = getCell(cellId);
+  const cellEl = document.querySelector(`.cell[data-id="${CSS.escape(cellId)}"]`);
+  const list   = cellEl?.querySelector('.annotation-list');
+  if (!cell || !list) return;
+
+  const chess = new Chess();
+  try { chess.loadPgn(cell.pgn || ''); } catch { chess.reset(); }
+  const history = chess.history({ verbose: true });
+
+  if (history.length === 0) {
+    list.innerHTML = '<div class="annotation-panel-empty">Make moves on the board to see them here.</div>';
+    return;
+  }
+
+  const commentsByFen = new Map(
+    (chess.getComments?.() || []).map(({ fen, comment }) => [fen, comment])
+  );
+
+  const walker = new Chess();
+  list.innerHTML = '';
+  history.forEach((mv, i) => {
+    walker.move(mv.san);
+    const num   = Math.floor(i / 2) + 1;
+    const label = mv.color === 'w' ? `${num}. ${mv.san}` : `${num}… ${mv.san}`;
+    const fen   = walker.fen();
+    _addRowToList(list, cellId, label, fen, commentsByFen.get(fen) || '');
+  });
+}
+
+// Shared row factory
+function _addRowToList(list, cellId, label, fen, comment) {
+  const row = document.createElement('div');
+  row.className = 'annotation-row';
+  row.dataset.fen = fen;
+  row.innerHTML =
+    `<div class="annotation-move-label">${escapeHtml(label)}</div>` +
+    `<textarea class="annotation-textarea" placeholder="Note for this move…">${escapeHtml(comment)}</textarea>`;
+  let debounce;
+  row.querySelector('.annotation-textarea').addEventListener('input', () => {
+    clearTimeout(debounce);
+    debounce = setTimeout(() => rebuildPgnWithAnnotations(cellId), 400);
+  });
+  list.appendChild(row);
+}
+
+// Collect textarea values and rewrite cell.pgn with embedded PGN comments
+function rebuildPgnWithAnnotations(cellId) {
+  const cell   = getCell(cellId);
+  const cellEl = document.querySelector(`.cell[data-id="${CSS.escape(cellId)}"]`);
+  if (!cell || !cellEl) return;
+
+  const chess = new Chess();
+  try { chess.loadPgn(cell.pgn || ''); } catch { chess.reset(); }
+  const history = chess.history({ verbose: true });
+
+  chess.reset();
+  if (chess.deleteComments) chess.deleteComments();
+
+  const fenToComment = new Map();
+  cellEl.querySelectorAll('.annotation-row').forEach(row => {
+    const comment = row.querySelector('.annotation-textarea')?.value?.trim();
+    if (comment) fenToComment.set(row.dataset.fen, comment);
+  });
+
+  history.forEach(mv => {
+    chess.move(mv.san);
+    const comment = fenToComment.get(chess.fen());
+    if (comment && chess.setComment) chess.setComment(comment);
+  });
+
+  updateCellData(cellId, { pgn: chess.pgn() });
 }
 
 // ── DOM builders ──────────────────────────────────────────────────────────────
@@ -102,7 +330,7 @@ function buildTextCell(cell) {
       <span class="cell-type-tag">Text</span>
       <div class="spacer"></div>
       <button class="btn-icon preview-toggle${hasContent ? ' active' : ''}" title="Toggle edit/preview">
-        ${hasContent ? '👁 Preview' : '✏ Edit'}
+        ${hasContent ? 'Preview' : '✏ Edit'}
       </button>
       <button class="btn-icon move-up" title="Move up">↑</button>
       <button class="btn-icon move-down" title="Move down">↓</button>
@@ -153,31 +381,17 @@ function buildBoardCell(cell) {
       <span class="cell-type-tag">Board</span>
       <input class="board-title-input" type="text" placeholder="Position title…" value="${escapeAttr(cell.title || '')}">
       <div class="spacer"></div>
+      <button class="btn-icon edit-moves-btn" title="Make moves and annotate">✏ Edit</button>
       <button class="btn-icon flip-board" title="Flip board">⇅ Flip</button>
-      <button class="btn-icon export-board" title="Export this board as HTML">⬇ Export</button>
+      <button class="btn-icon export-board" title="Export as PGN">⬇ PGN</button>
       <button class="btn-icon move-up" title="Move up">↑</button>
       <button class="btn-icon move-down" title="Move down">↓</button>
       <button class="btn-icon danger delete-cell" title="Delete cell">✕</button>
     </div>
     <div class="cell-body">
-      <div class="board-viewer-wrap">
-        <div class="board-viewer" id="viewer-${cell.id}"></div>
-      </div>
-      <div class="pgn-edit-wrap">
-        <textarea class="pgn-editor" placeholder="Paste or type PGN here…
-
-Tips:
-  Draw arrows  →  [%cal Ge2e4,Re7e5]
-  Color squares →  [%csl Gd4,Re5]
-  Colors: G=green  R=red  Y=yellow  B=blue
-
-Example:
-  1. e4 { [%csl Ge4][%cal Gd1h5,Gf1c4] } e5 2. Nf3">${escapeHtml(cell.pgn || '')}</textarea>
-        <div class="pgn-hints">
-          Arrows: <code>[%cal Ge2e4]</code> &nbsp;·&nbsp;
-          Squares: <code>[%csl Ge4]</code> &nbsp;·&nbsp;
-          Colors: <strong>G</strong>reen <strong>R</strong>ed <strong>Y</strong>ellow <strong>B</strong>lue
-        </div>
+      <div class="board-viewer-wrap"></div>
+      <div class="annotation-panel">
+        <div class="annotation-list"></div>
       </div>
     </div>`;
 
@@ -185,20 +399,17 @@ Example:
     updateCellData(cell.id, { title: e.target.value });
   });
 
-  let pgnDebounce;
-  div.querySelector('.pgn-editor').addEventListener('input', e => {
-    updateCellData(cell.id, { pgn: e.target.value });
-    clearTimeout(pgnDebounce);
-    pgnDebounce = setTimeout(() => {
-      mountViewer(cell.id, e.target.value, getCell(cell.id).orientation);
-    }, 600);
+  div.querySelector('.edit-moves-btn').addEventListener('click', () => {
+    if (editInstances.has(cell.id)) exitEditMode(cell.id);
+    else enterEditMode(cell.id);
   });
 
   div.querySelector('.flip-board').addEventListener('click', () => {
-    const c = getCell(cell.id);
+    if (editInstances.has(cell.id)) exitEditMode(cell.id);
+    const c    = getCell(cell.id);
     const next = c.orientation === 'white' ? 'black' : 'white';
     updateCellData(cell.id, { orientation: next });
-    mountViewer(cell.id, c.pgn, next);
+    mountViewer(cell.id, c.pgn, next, true);
   });
 
   div.querySelector('.export-board').addEventListener('click', () => exportBoard(cell.id));
@@ -241,6 +452,10 @@ function deleteCell(id) {
   const existing = viewerInstances.get(id);
   if (existing && typeof existing.destroy === 'function') existing.destroy();
   viewerInstances.delete(id);
+
+  const editInst = editInstances.get(id);
+  if (editInst?.ground?.destroy) editInst.ground.destroy();
+  editInstances.delete(id);
 
   state.cells.splice(idx, 1);
   document.querySelector(`.cell[data-id="${CSS.escape(id)}"]`)?.remove();
@@ -300,39 +515,49 @@ document.getElementById('notebookTitle').addEventListener('input', e => {
 
 // ── Save / Load ───────────────────────────────────────────────────────────────
 
-document.getElementById('saveBtn').addEventListener('click', () => {
-  const data = { title: state.title, cells: state.cells };
-  const filename = (state.title.replace(/[^a-z0-9]/gi, '-').toLowerCase() || 'notebook') + '.json';
-  downloadBlob(JSON.stringify(data, null, 2), 'application/json', filename);
+// ── Sidebar + study management ────────────────────────────────────────────
+
+document.getElementById('sidebarToggle').addEventListener('click', () => {
+  document.body.classList.toggle('sidebar-open');
 });
 
-document.getElementById('loadFile').addEventListener('change', e => {
-  const file = e.target.files[0];
-  if (!file) return;
-  const reader = new FileReader();
-  reader.onload = ev => {
-    try {
-      loadNotebook(JSON.parse(ev.target.result));
-    } catch {
-      alert('Could not parse the notebook file — is it valid JSON?');
-    }
-  };
-  reader.readAsText(file);
-  e.target.value = '';   // reset so the same file can be reloaded
-});
+function handleNewEntry() { saveCurrentStudy(); createNewStudy(); }
+document.getElementById('newEntryBtn').addEventListener('click', handleNewEntry);
+document.getElementById('sidebarNewBtn').addEventListener('click', handleNewEntry);
 
-function loadNotebook(data) {
-  // Tear down
-  viewerInstances.forEach((inst) => {
-    if (typeof inst.destroy === 'function') inst.destroy();
-  });
+function todayTitle() {
+  return new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
+}
+
+function createNewStudy() {
+  let title = todayTitle();
+  const dupes = state.studiesIndex.filter(s => s.title === title || s.title.startsWith(title + ' ('));
+  if (dupes.length > 0) title = `${title} (${dupes.length + 1})`;
+
+  const id  = uid();
+  const now = new Date().toISOString();
+  state.studiesIndex.unshift({ id, title, date: now, updatedAt: now });
+  saveIndex();
+  loadStudyIntoEditor({ id, title, cells: [] });
+}
+
+function openStudy(id) {
+  saveCurrentStudy();
+  const data = loadStudyData(id);
+  if (data) loadStudyIntoEditor(data);
+}
+
+function loadStudyIntoEditor(data) {
+  viewerInstances.forEach(inst => { if (typeof inst?.destroy === 'function') inst.destroy(); });
   viewerInstances.clear();
+  editInstances.forEach(inst => { if (inst?.ground?.destroy) inst.ground.destroy(); });
+  editInstances.clear();
   state.cells = [];
-
   document.getElementById('notebook').innerHTML = '';
-  const titleEl = document.getElementById('notebookTitle');
-  titleEl.value = data.title || 'Untitled Study';
-  state.title   = titleEl.value;
+
+  state.studyId = data.id;
+  state.title   = data.title || todayTitle();
+  document.getElementById('notebookTitle').value = state.title;
 
   (data.cells || []).forEach(cell => {
     state.cells.push(cell);
@@ -344,7 +569,107 @@ function loadNotebook(data) {
   });
 
   updateEmptyState();
+  saveStudyData(data.id, { id: data.id, title: state.title, cells: state.cells });
+  renderSidebar();
 }
+
+function renderSidebar() {
+  const container = document.getElementById('sidebar-entries');
+  if (!container) return;
+  container.innerHTML = '';
+  state.studiesIndex.forEach(entry => {
+    const div  = document.createElement('div');
+    div.className = 'sidebar-entry' + (entry.id === state.studyId ? ' active' : '');
+    const d    = new Date(entry.date);
+    const meta = isNaN(d) ? '' : d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+    div.innerHTML = `
+      <div class="entry-info">
+        <div class="entry-title">${escapeHtml(entry.title)}</div>
+        <div class="entry-meta">${escapeHtml(meta)}</div>
+      </div>
+      <button class="sidebar-delete-btn" title="Delete entry" aria-label="Delete entry">✕</button>`;
+    div.addEventListener('click', () => { if (entry.id !== state.studyId) openStudy(entry.id); });
+    div.querySelector('.sidebar-delete-btn').addEventListener('click', e => {
+      e.stopPropagation();
+      deleteStudy(entry.id);
+    });
+    container.appendChild(div);
+  });
+}
+
+function deleteStudy(id) {
+  if (!confirm('Delete this diary entry? This cannot be undone.')) return;
+  const idx = state.studiesIndex.findIndex(s => s.id === id);
+  if (idx === -1) return;
+  state.studiesIndex.splice(idx, 1);
+  try { localStorage.removeItem('cellular-study-' + id); } catch {}
+  saveIndex();
+  if (state.studyId === id) {
+    // Currently open — switch to nearest entry or create a new one
+    if (state.studiesIndex.length > 0) {
+      const data = loadStudyData(state.studiesIndex[0].id);
+      if (data) { loadStudyIntoEditor(data); return; }
+    }
+    createNewStudy();
+  } else {
+    renderSidebar();
+  }
+}
+
+// ── Export / Import all data ──────────────────────────────────────────────────
+
+document.getElementById('exportAllBtn').addEventListener('click', () => {
+  saveCurrentStudy();
+  const studies = state.studiesIndex.map(entry => {
+    const data = loadStudyData(entry.id) || { id: entry.id, title: entry.title, cells: [] };
+    return { ...entry, cells: data.cells || [] };
+  });
+  const payload = JSON.stringify({ version: 1, exportedAt: new Date().toISOString(), studies }, null, 2);
+  const filename = 'chess-diary-' + new Date().toISOString().slice(0, 10) + '.json';
+  downloadBlob(payload, 'application/json', filename);
+});
+
+document.getElementById('importFile').addEventListener('change', e => {
+  const file = e.target.files[0];
+  if (!file) return;
+  e.target.value = '';   // reset so same file can be re-imported
+  const reader = new FileReader();
+  reader.onload = ev => {
+    let imported;
+    try { imported = JSON.parse(ev.target.result); } catch {
+      alert('Could not parse the file — is it valid JSON?'); return;
+    }
+    const studies = imported.studies ?? imported;   // accept bare array too
+    if (!Array.isArray(studies) || studies.length === 0) {
+      alert('No diary entries found in the file.'); return;
+    }
+    const newCount = studies.filter(s => !state.studiesIndex.find(e => e.id === s.id)).length;
+    const updCount = studies.filter(s =>  state.studiesIndex.find(e => e.id === s.id)).length;
+    const msg = [
+      `Import ${studies.length} entr${studies.length === 1 ? 'y' : 'ies'}?`,
+      newCount  ? `  • ${newCount} new`     : '',
+      updCount  ? `  • ${updCount} updated` : '',
+    ].filter(Boolean).join('\n');
+    if (!confirm(msg)) return;
+
+    studies.forEach(s => {
+      const { cells, date, updatedAt, title, id } = s;
+      if (!id) return;
+      saveStudyData(id, { id, title: title || 'Imported', cells: cells || [] });
+      const existing = state.studiesIndex.findIndex(e => e.id === id);
+      if (existing !== -1) {
+        state.studiesIndex[existing] = { ...state.studiesIndex[existing], title: title || 'Imported', updatedAt: updatedAt || new Date().toISOString() };
+      } else {
+        state.studiesIndex.push({ id, title: title || 'Imported', date: date || new Date().toISOString(), updatedAt: updatedAt || new Date().toISOString() });
+      }
+    });
+    // Sort newest-first by date
+    state.studiesIndex.sort((a, b) => new Date(b.date) - new Date(a.date));
+    saveIndex();
+    renderSidebar();
+  };
+  reader.readAsText(file);
+});
 
 // ── Export ────────────────────────────────────────────────────────────────────
 
@@ -360,10 +685,9 @@ function exportFullBook() {
 function exportBoard(id) {
   const cell = getCell(id);
   if (!cell) return;
-  const title    = cell.title || 'Board Position';
-  const bodyHtml = cellToExportHtml(cell);
-  const filename = (title.replace(/[^a-z0-9]/gi, '-').toLowerCase() || 'board') + '.html';
-  downloadBlob(buildExportPage(title, bodyHtml, true), 'text/html', filename);
+  const pgn  = cell.pgn || '';
+  const name = (cell.title || 'board').replace(/[^a-z0-9]/gi, '-').toLowerCase() || 'board';
+  downloadBlob(pgn, 'application/x-chess-pgn', name + '.pgn');
 }
 
 function cellToExportHtml(cell) {
@@ -388,7 +712,7 @@ function buildExportPage(title, bodyHtml) {
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>${escapeHtml(title)}</title>
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@lichess-org/pgn-viewer@1/dist/pgn-viewer.css">
+  <link rel="stylesheet" href="https://unpkg.com/@lichess-org/pgn-viewer@2.6.0/dist/lichess-pgn-viewer.css">
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
     :root {
@@ -427,8 +751,8 @@ function buildExportPage(title, bodyHtml) {
     <h1 class="nb-title">${escapeHtml(title)}</h1>
     ${bodyHtml}
   </div>
-  <script src="https://cdn.jsdelivr.net/npm/@lichess-org/pgn-viewer@1/dist/pgn-viewer.umd.js"><\/script>
-  <script>
+  <script type="module">
+    import LichessPgnViewer from 'https://esm.sh/@lichess-org/pgn-viewer@2.6.0?bundle';
     document.querySelectorAll('.board-viewer').forEach(function (el) {
       LichessPgnViewer(el, {
         pgn:         el.dataset.pgn || '',
@@ -452,17 +776,29 @@ function downloadBlob(content, type, filename) {
   URL.revokeObjectURL(a.href);
 }
 
-// ── Boot ──────────────────────────────────────────────────────────────────────
+// ── Boot ───────────────────────────────────────────────────────────────────────
 
 (function init() {
-  // Restore auto-saved session if present
-  try {
-    const saved = localStorage.getItem('cellular-notebook');
-    if (saved) {
-      loadNotebook(JSON.parse(saved));
-      return;
-    }
-  } catch { /* corrupted — start fresh */ }
+  state.studiesIndex = loadIndex();
 
-  updateEmptyState();
+  // Migrate from the original single-notebook localStorage key
+  const legacy = localStorage.getItem('cellular-notebook');
+  if (legacy && state.studiesIndex.length === 0) {
+    try {
+      const old = JSON.parse(legacy);
+      const id  = uid();
+      const now = new Date().toISOString();
+      state.studiesIndex.push({ id, title: old.title || 'Migrated Study', date: now, updatedAt: now });
+      saveStudyData(id, { id, title: old.title || 'Migrated Study', cells: old.cells || [] });
+      saveIndex();
+      localStorage.removeItem('cellular-notebook');
+    } catch {}
+  }
+
+  if (state.studiesIndex.length > 0) {
+    const data = loadStudyData(state.studiesIndex[0].id);
+    if (data) { loadStudyIntoEditor(data); return; }
+  }
+
+  createNewStudy();
 }());

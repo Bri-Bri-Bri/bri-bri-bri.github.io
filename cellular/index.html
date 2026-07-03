@@ -12,6 +12,7 @@
 <body>
 
   <header id="menubar">
+    <button id="sidebarToggle" class="btn-icon" title="Toggle diary sidebar">☰</button>
     <span class="logo">♟ Cellular</span>
     <div class="menu-section">
       <button id="addTextBtn" class="btn btn-ghost">+ Text</button>
@@ -19,27 +20,44 @@
     </div>
     <div class="spacer"></div>
     <div class="menu-section">
-      <button id="saveBtn" class="btn btn-secondary">Save .json</button>
-      <label class="btn btn-secondary" for="loadFile">Load .json</label>
-      <input id="loadFile" type="file" accept=".json" style="display:none">
-      <button id="exportBtn" class="btn btn-primary">Export HTML</button>
+      <button id="newEntryBtn" class="btn btn-secondary">+ New Entry</button>
+      <button id="exportBtn" class="btn btn-primary">Export Entry</button>
     </div>
   </header>
 
+  <aside id="sidebar">
+    <div id="sidebar-header">
+      <span class="sidebar-label">Chess Diary</span>
+      <button id="sidebarNewBtn" class="btn btn-primary">+ New</button>
+    </div>
+    <div id="sidebar-entries"></div>
+    <div id="sidebar-footer">
+      <button id="exportAllBtn" class="btn btn-ghost btn-sm" title="Export all diary entries as JSON">⬇ Export all</button>
+      <label id="importLabel" class="btn btn-ghost btn-sm" title="Import diary entries from JSON">
+        ⬆ Import
+        <input type="file" id="importFile" accept=".json" style="display:none">
+      </label>
+    </div>
+  </aside>
+
+  <div id="notebook-area">
+
   <div id="title-wrap">
-    <input id="notebookTitle" type="text" placeholder="Untitled Study" value="Untitled Study">
+    <input id="notebookTitle" type="text" placeholder="Today's date…">
   </div>
 
   <main id="notebook"></main>
 
   <div id="empty-state">
     <div class="empty-icon">♟</div>
-    <p>Start your chess study by adding a cell.</p>
+    <p>Start your diary entry by adding a cell.</p>
     <p class="empty-hint">
-      <strong>+ Text</strong> for explanations &nbsp;·&nbsp;
-      <strong>+ Board</strong> for interactive positions
+      <strong>+ Text</strong> for notes &nbsp;|&nbsp;
+      <strong>+ Board</strong> for positions
     </p>
   </div>
+
+  </div><!-- #notebook-area -->
 
   <script type="module" src="editor.js"></script>
 </body>
