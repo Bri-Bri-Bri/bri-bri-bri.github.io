@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Cellular — Chess Notebook</title>
+  <!-- shared navbar: prevents theme flash + injects site nav -->
+  <script src="../shared/navbar.js"></script>
+  <link rel="stylesheet" href="https://unpkg.com/@lichess-org/pgn-viewer@2.6.0/dist/lichess-pgn-viewer.css">
+  <link rel="stylesheet" href="editor.css">
+</head>
+<body>
+
+  <header id="menubar">
+    <span class="logo">♟ Cellular</span>
+    <div class="menu-section">
+      <button id="addTextBtn" class="btn btn-ghost">+ Text</button>
+      <button id="addBoardBtn" class="btn btn-ghost">+ Board</button>
+    </div>
+    <div class="spacer"></div>
+    <div class="menu-section">
+      <button id="saveBtn" class="btn btn-secondary">Save .json</button>
+      <label class="btn btn-secondary" for="loadFile">Load .json</label>
+      <input id="loadFile" type="file" accept=".json" style="display:none">
+      <button id="exportBtn" class="btn btn-primary">Export HTML</button>
+    </div>
+  </header>
+
+  <div id="title-wrap">
+    <input id="notebookTitle" type="text" placeholder="Untitled Study" value="Untitled Study">
+  </div>
+
+  <main id="notebook"></main>
+
+  <div id="empty-state">
+    <div class="empty-icon">♟</div>
+    <p>Start your chess study by adding a cell.</p>
+    <p class="empty-hint">
+      <strong>+ Text</strong> for explanations &nbsp;·&nbsp;
+      <strong>+ Board</strong> for interactive positions
+    </p>
+  </div>
+
+  <script type="module" src="editor.js"></script>
+</body>
+</html>
