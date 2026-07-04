@@ -93,7 +93,7 @@ function saveCurrentStudy() {
 
 // ── Board viewer management ───────────────────────────────────────────────────
 
-function mountViewer(cellId, pgn, orientation = 'white', showMoves = true) {
+function mountViewer(cellId, pgn, orientation = 'white', showMoves = true, initialPly = undefined) {
   const cellEl = document.querySelector(`.cell[data-id="${CSS.escape(cellId)}"]`);
   if (!cellEl) return;
   const wrap = cellEl.querySelector('.board-viewer-wrap');
@@ -118,6 +118,8 @@ function mountViewer(cellId, pgn, orientation = 'white', showMoves = true) {
     drawArrows: true,
     scrollToMove: false,
     showMoves: showMoves ? 'auto' : false,
+    theme: getBoardTheme(),
+    initialPly: initialPly ?? 0,
     menu: {
       getPgn: { enabled: false }, // we have our own Export button
       // analysisBoard + practiceWithComputer stay enabled (open Lichess)
@@ -151,11 +153,10 @@ function enterEditMode(cellId) {
   viewerInstances.delete(cellId);
   wrap.innerHTML = '';
 
-  // Parse PGN — start chessground from the final position of the game
+  // Parse PGN — start chessground from the final position
   const chess = new Chess();
   try { chess.loadPgn(cell.pgn || ''); } catch { chess.reset(); }
 
-  // Chessground needs a .cg-wrap element
   const cgWrap = document.createElement('div');
   cgWrap.className = 'cg-wrap cg-edit-board';
   wrap.appendChild(cgWrap);
@@ -170,21 +171,14 @@ function enterEditMode(cellId) {
       dests: getLegalMoveDests(chess),
       events: {
         after(from, to) {
-          // Auto-promote to queen (promotion UI is a future enhancement)
           const move = chess.move({ from, to, promotion: 'q' });
           if (!move) return;
-
-          const newPgn = chess.pgn();
-          updateCellData(cellId, { pgn: newPgn });
-
-          // Append annotation row for the new move
+          updateCellData(cellId, { pgn: chess.pgn() });
           const hist = chess.history({ verbose: true });
           const last = hist[hist.length - 1];
           const num  = Math.floor((hist.length - 1) / 2) + 1;
           const lbl  = last.color === 'w' ? `${num}. ${last.san}` : `${num}… ${last.san}`;
           appendAnnotationRow(cellId, lbl, chess.fen());
-
-          // Update board for next move
           ground.set({
             fen: chess.fen(),
             turnColor: chess.turn() === 'w' ? 'white' : 'black',
@@ -199,39 +193,31 @@ function enterEditMode(cellId) {
   });
 
   editInstances.set(cellId, { chess, ground });
-
-  // Show annotation panel alongside the board
   cellEl.classList.add('edit-mode');
   refreshAnnotationPanel(cellId);
   cellEl.querySelector('.annotation-panel').classList.add('is-visible');
-
   const btn = cellEl.querySelector('.edit-moves-btn');
   if (btn) { btn.textContent = '✓ Done'; btn.classList.add('active'); }
 }
 
 function exitEditMode(cellId) {
-  rebuildPgnWithAnnotations(cellId);  // persist any annotations typed this session
-
+  rebuildPgnWithAnnotations(cellId);
   const inst = editInstances.get(cellId);
   if (inst?.ground?.destroy) inst.ground.destroy();
   editInstances.delete(cellId);
-
   const cellEl = document.querySelector(`.cell[data-id="${CSS.escape(cellId)}"]`);
-  if (cellEl) {
-    cellEl.classList.remove('edit-mode');
-    cellEl.querySelector('.annotation-panel').classList.remove('is-visible');
-  }
-
+  if (!cellEl) return;
+  cellEl.classList.remove('edit-mode');
+  cellEl.querySelector('.annotation-panel').classList.remove('is-visible');
+  const btn = cellEl.querySelector('.edit-moves-btn');
+  if (btn) { btn.textContent = '✏ Edit'; btn.classList.remove('active'); }
   const cell = getCell(cellId);
   mountViewer(cellId, cell.pgn, cell.orientation, true);
-
-  const btn = cellEl?.querySelector('.edit-moves-btn');
-  if (btn) { btn.textContent = '✏ Edit'; btn.classList.remove('active'); }
 }
 
 // ── Annotations ───────────────────────────────────────────────────────────────
 
-// Append one row (called after each new move in edit mode)
+// Append one row after a new move is made on the Chessground board
 function appendAnnotationRow(cellId, label, fen) {
   const cellEl = document.querySelector(`.cell[data-id="${CSS.escape(cellId)}"]`);
   const list   = cellEl?.querySelector('.annotation-list');
@@ -253,7 +239,7 @@ function refreshAnnotationPanel(cellId) {
   const history = chess.history({ verbose: true });
 
   if (history.length === 0) {
-    list.innerHTML = '<div class="annotation-panel-empty">Make moves on the board to see them here.</div>';
+    list.innerHTML = '<div class="annotation-panel-empty">No moves yet — use “✎ PGN” to paste a game.</div>';
     return;
   }
 
@@ -268,27 +254,81 @@ function refreshAnnotationPanel(cellId) {
     const num   = Math.floor(i / 2) + 1;
     const label = mv.color === 'w' ? `${num}. ${mv.san}` : `${num}… ${mv.san}`;
     const fen   = walker.fen();
-    _addRowToList(list, cellId, label, fen, commentsByFen.get(fen) || '');
+    // Only show user-written text, not machine annotations like [%clk]
+    _addRowToList(list, cellId, label, fen, _userText(commentsByFen.get(fen) || ''));
   });
 }
 
-// Shared row factory
+// Navigate the Chessground board (in edit mode) to a specific FEN.
+// At non-final positions the board is view-only; at the final position moves are re-enabled.
+function _navigateBoardToFen(cellId, fen) {
+  const inst = editInstances.get(cellId);
+  if (!inst) return;
+  const { chess, ground } = inst;
+
+  // Highlight the clicked row, clear others
+  const cellEl = document.querySelector(`.cell[data-id="${CSS.escape(cellId)}"]`);
+  cellEl?.querySelectorAll('.annotation-row').forEach(r => r.classList.remove('active'));
+  cellEl?.querySelector(`.annotation-row[data-fen="${fen}"]`)?.classList.add('active');
+
+  const isEnd = fen === chess.fen();
+  const tempChess = new Chess(fen);
+  ground.set({
+    fen,
+    turnColor: tempChess.turn() === 'w' ? 'white' : 'black',
+    lastMove: [],
+    movable: isEnd
+      ? { color: 'both', dests: getLegalMoveDests(chess) }
+      : { color: 'none', dests: new Map() },
+    premovable: { enabled: false },
+  });
+}
+
+// Read the current ply from the pgn-viewer DOM (class 'move current' index + 1)
+function getViewerPly(cellId) {
+  const cellEl = document.querySelector(`.cell[data-id="${CSS.escape(cellId)}"]`);
+  const allMoves = [...(cellEl?.querySelectorAll('.move') || [])];
+  const idx = allMoves.findIndex(b => b.classList.contains('current'));
+  return idx >= 0 ? idx + 1 : 0;
+}
+
+// Shared row factory — uses contenteditable for an inline, text-like feel
 function _addRowToList(list, cellId, label, fen, comment) {
   const row = document.createElement('div');
   row.className = 'annotation-row';
   row.dataset.fen = fen;
-  row.innerHTML =
-    `<div class="annotation-move-label">${escapeHtml(label)}</div>` +
-    `<textarea class="annotation-textarea" placeholder="Note for this move…">${escapeHtml(comment)}</textarea>`;
+  row.innerHTML = `<span class="annotation-move-label">${escapeHtml(label)}</span>`;
+  const note = document.createElement('div');
+  note.className = 'annotation-note';
+  note.contentEditable = 'plaintext-only';
+  note.dataset.placeholder = 'Add a note…';
+  note.textContent = comment || '';
   let debounce;
-  row.querySelector('.annotation-textarea').addEventListener('input', () => {
+  note.addEventListener('input', () => {
     clearTimeout(debounce);
-    debounce = setTimeout(() => rebuildPgnWithAnnotations(cellId), 400);
+    debounce = setTimeout(() => rebuildPgnWithAnnotations(cellId), 500);
   });
+  // Clicking the move label navigates the Chessground board to that position
+  row.querySelector('.annotation-move-label').addEventListener('click', e => {
+    e.stopPropagation();
+    _navigateBoardToFen(cellId, fen);
+  });
+  row.appendChild(note);
   list.appendChild(row);
 }
 
-// Collect textarea values and rewrite cell.pgn with embedded PGN comments
+// Strip machine-generated PGN annotations ([%clk ...], [%eval ...], etc.) from
+// a comment, returning only the human-written text.
+function _userText(comment) {
+  return (comment || '').replace(/\[%[^\]]*\]/g, '').trim();
+}
+// Rebuild a full comment from human text + preserved specials from original.
+function _mergeComment(userText, originalComment) {
+  const specials = (originalComment || '').match(/\[%[^\]]*\]/g) || [];
+  return [...specials, ...(userText ? [userText] : [])].join(' ');
+}
+
+// Collect contenteditable values and rewrite cell.pgn with embedded PGN comments
 function rebuildPgnWithAnnotations(cellId) {
   const cell   = getCell(cellId);
   const cellEl = document.querySelector(`.cell[data-id="${CSS.escape(cellId)}"]`);
@@ -298,19 +338,26 @@ function rebuildPgnWithAnnotations(cellId) {
   try { chess.loadPgn(cell.pgn || ''); } catch { chess.reset(); }
   const history = chess.history({ verbose: true });
 
+  // Capture original comments (including machine specials like [%clk])
+  const originalComments = new Map(
+    (chess.getComments?.() || []).map(({ fen, comment }) => [fen, comment])
+  );
+
   chess.reset();
   if (chess.deleteComments) chess.deleteComments();
 
-  const fenToComment = new Map();
+  const fenToUserText = new Map();
   cellEl.querySelectorAll('.annotation-row').forEach(row => {
-    const comment = row.querySelector('.annotation-textarea')?.value?.trim();
-    if (comment) fenToComment.set(row.dataset.fen, comment);
+    const text = row.querySelector('.annotation-note')?.textContent?.trim();
+    if (text !== undefined) fenToUserText.set(row.dataset.fen, text);
   });
 
   history.forEach(mv => {
     chess.move(mv.san);
-    const comment = fenToComment.get(chess.fen());
-    if (comment && chess.setComment) chess.setComment(comment);
+    const fen     = chess.fen();
+    const userTxt = fenToUserText.get(fen) ?? '';
+    const merged  = _mergeComment(userTxt, originalComments.get(fen) || '');
+    if (merged && chess.setComment) chess.setComment(merged);
   });
 
   updateCellData(cellId, { pgn: chess.pgn() });
@@ -334,6 +381,13 @@ function buildTextCell(cell) {
       </button>
       <button class="btn-icon move-up" title="Move up">↑</button>
       <button class="btn-icon move-down" title="Move down">↓</button>
+      <div class="cell-insert-wrap">
+        <button class="btn-icon cell-insert-btn" title="Insert cell after">⊕</button>
+        <div class="cell-insert-dropdown">
+          <button class="insert-text-btn">+ Text</button>
+          <button class="insert-board-btn">+ Board</button>
+        </div>
+      </div>
       <button class="btn-icon danger delete-cell" title="Delete cell">✕</button>
     </div>
     <div class="cell-body">
@@ -368,6 +422,8 @@ function buildTextCell(cell) {
 
   ta.addEventListener('input', e => updateCellData(cell.id, { content: e.target.value }));
 
+  _bindInsertBtn(div, cell.id);
+
   return div;
 }
 
@@ -381,11 +437,19 @@ function buildBoardCell(cell) {
       <span class="cell-type-tag">Board</span>
       <input class="board-title-input" type="text" placeholder="Position title…" value="${escapeAttr(cell.title || '')}">
       <div class="spacer"></div>
-      <button class="btn-icon edit-moves-btn" title="Make moves and annotate">✏ Edit</button>
+      <button class="btn-icon edit-moves-btn" title="Annotate moves">✏ Edit</button>
+      <button class="btn-icon pgn-editor-btn" title="Edit / paste PGN">✎ PGN</button>
       <button class="btn-icon flip-board" title="Flip board">⇅ Flip</button>
-      <button class="btn-icon export-board" title="Export as PGN">⬇ PGN</button>
+      <button class="btn-icon export-board" title="Export as PGN">⬇︎ PGN</button>
       <button class="btn-icon move-up" title="Move up">↑</button>
       <button class="btn-icon move-down" title="Move down">↓</button>
+      <div class="cell-insert-wrap">
+        <button class="btn-icon cell-insert-btn" title="Insert cell after">⊕</button>
+        <div class="cell-insert-dropdown">
+          <button class="insert-text-btn">+ Text</button>
+          <button class="insert-board-btn">+ Board</button>
+        </div>
+      </div>
       <button class="btn-icon danger delete-cell" title="Delete cell">✕</button>
     </div>
     <div class="cell-body">
@@ -400,8 +464,7 @@ function buildBoardCell(cell) {
   });
 
   div.querySelector('.edit-moves-btn').addEventListener('click', () => {
-    if (editInstances.has(cell.id)) exitEditMode(cell.id);
-    else enterEditMode(cell.id);
+    if (editInstances.has(cell.id)) exitEditMode(cell.id); else enterEditMode(cell.id);
   });
 
   div.querySelector('.flip-board').addEventListener('click', () => {
@@ -409,10 +472,14 @@ function buildBoardCell(cell) {
     const c    = getCell(cell.id);
     const next = c.orientation === 'white' ? 'black' : 'white';
     updateCellData(cell.id, { orientation: next });
-    mountViewer(cell.id, c.pgn, next, true);
+    const ply  = getViewerPly(cell.id);
+    mountViewer(cell.id, c.pgn, next, true, ply || undefined);
   });
 
   div.querySelector('.export-board').addEventListener('click', () => exportBoard(cell.id));
+  div.querySelector('.pgn-editor-btn').addEventListener('click', () => openPgnEditor(cell.id));
+
+  _bindInsertBtn(div, cell.id);
 
   return div;
 }
@@ -420,6 +487,42 @@ function buildBoardCell(cell) {
 function renderMarkdown(content) {
   if (!content) return '';
   return marked.parse(content);
+}
+
+// Shared: wire up the ⊕ insert-after dropdown on any cell element
+function _bindInsertBtn(cellEl, cellId) {
+  const wrap = cellEl.querySelector('.cell-insert-wrap');
+  const btn  = wrap.querySelector('.cell-insert-btn');
+  btn.addEventListener('click', e => {
+    e.stopPropagation();
+    const wasOpen = wrap.classList.contains('is-open');
+    // Close any other open insert dropdowns
+    document.querySelectorAll('.cell-insert-wrap.is-open').forEach(w => w.classList.remove('is-open'));
+    if (!wasOpen) {
+      wrap.classList.add('is-open');
+      const close = () => { wrap.classList.remove('is-open'); document.removeEventListener('click', close); };
+      document.addEventListener('click', close);
+    }
+  });
+  wrap.querySelector('.insert-text-btn').addEventListener('click',  () => insertCellAfter(cellId, 'text'));
+  wrap.querySelector('.insert-board-btn').addEventListener('click', () => insertCellAfter(cellId, 'board'));
+}
+
+function insertCellAfter(afterId, type) {
+  const idx = state.cells.findIndex(c => c.id === afterId);
+  if (idx === -1) return;
+  const cell  = type === 'text' ? newTextCell() : newBoardCell();
+  state.cells.splice(idx + 1, 0, cell);
+  const el    = type === 'text' ? buildTextCell(cell) : buildBoardCell(cell);
+  const afterEl = document.querySelector(`.cell[data-id="${CSS.escape(afterId)}"]`);
+  afterEl ? afterEl.insertAdjacentElement('afterend', el) : document.getElementById('notebook').appendChild(el);
+  updateEmptyState();
+  if (type === 'board') requestAnimationFrame(() => mountViewer(cell.id, cell.pgn, cell.orientation));
+  requestAnimationFrame(() => {
+    const focus = el.querySelector(type === 'text' ? '.md-editor' : '.board-title-input');
+    if (focus) focus.focus();
+  });
+  scheduleAutoSave();
 }
 
 // ── Notebook mutations ────────────────────────────────────────────────────────
@@ -452,11 +555,9 @@ function deleteCell(id) {
   const existing = viewerInstances.get(id);
   if (existing && typeof existing.destroy === 'function') existing.destroy();
   viewerInstances.delete(id);
-
   const editInst = editInstances.get(id);
   if (editInst?.ground?.destroy) editInst.ground.destroy();
   editInstances.delete(id);
-
   state.cells.splice(idx, 1);
   document.querySelector(`.cell[data-id="${CSS.escape(id)}"]`)?.remove();
   updateEmptyState();
@@ -775,6 +876,270 @@ function downloadBlob(content, type, filename) {
   a.click();
   URL.revokeObjectURL(a.href);
 }
+
+// ── Settings ──────────────────────────────────────────────────────────────────
+
+function getBoardTheme() {
+  const t = loadSettings().boardTheme || 'auto';
+  if (t !== 'auto') return t;
+  return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'blue' : 'brown';
+}
+
+function loadSettings() {
+  try { return JSON.parse(localStorage.getItem('cellular-settings') || '{}'); } catch { return {}; }
+}
+function saveSettings(data) {
+  try { localStorage.setItem('cellular-settings', JSON.stringify(data)); } catch {}
+}
+
+const settingsModal = document.getElementById('settingsModal');
+
+function openSettingsModal() {
+  const s = loadSettings();
+  document.getElementById('settingsLichess').value     = s.lichessUser  || '';
+  document.getElementById('settingsChesscom').value    = s.chesscomUser || '';
+  document.getElementById('settingsBoardTheme').value  = s.boardTheme   || 'auto';
+  settingsModal.classList.add('is-open');
+}
+function closeSettingsModal() { settingsModal.classList.remove('is-open'); }
+
+document.getElementById('settingsBtn').addEventListener('click', openSettingsModal);
+document.getElementById('settingsClose').addEventListener('click', closeSettingsModal);
+settingsModal.addEventListener('click', e => { if (e.target === settingsModal) closeSettingsModal(); });
+settingsModal.addEventListener('keydown', e => { if (e.key === 'Escape') closeSettingsModal(); });
+
+document.getElementById('settingsSave').addEventListener('click', () => {
+  saveSettings({
+    lichessUser:  document.getElementById('settingsLichess').value.trim(),
+    chesscomUser: document.getElementById('settingsChesscom').value.trim(),
+    boardTheme:   document.getElementById('settingsBoardTheme').value,
+  });
+  closeSettingsModal();
+  // Re-apply theme to all mounted viewers
+  state.cells.filter(c => c.type === 'board').forEach(c => {
+    const cellEl = document.querySelector(`.cell[data-id="${CSS.escape(c.id)}"]`);
+    const inEdit = cellEl?.classList.contains('edit-mode');
+    const inst   = viewerInstances.get(c.id);
+    const ply    = inst?.vm?.ply ?? undefined;
+    mountViewer(c.id, c.pgn, c.orientation, true, ply);
+    if (inEdit) {
+      cellEl.classList.add('edit-mode');
+      cellEl.querySelector('.annotation-panel').classList.add('is-visible');
+    }
+  });
+});
+
+// ── Game APIs ─────────────────────────────────────────────────────────────────
+
+async function fetchLichessGames(username) {
+  const res = await fetch(
+    `https://lichess.org/api/games/user/${encodeURIComponent(username)}?max=30&pgnInJson=true&opening=true&tags=true`,
+    { headers: { Accept: 'application/x-ndjson' } }
+  );
+  if (!res.ok) throw new Error(`Lichess ${res.status}: could not load games`);
+  const text = await res.text();
+  return text.trim().split('\n').filter(Boolean).map(line => {
+    const g = JSON.parse(line);
+    const isWhite = g.players?.white?.user?.name?.toLowerCase() === username.toLowerCase();
+    const opponent = (isWhite ? g.players?.black?.user?.name : g.players?.white?.user?.name) || '?';
+    const myColor  = isWhite ? 'white' : 'black';
+    const result   = !g.winner ? '½–½' : g.winner === myColor ? '1–0' : '0–1';
+    return {
+      platform: 'lichess',
+      pgn:      g.pgn,
+      opponent,
+      result,
+      myColor,
+      speed:    g.speed || g.perf,
+      opening:  g.opening?.name,
+      date:     new Date(g.createdAt),
+    };
+  });
+}
+
+async function fetchChesscomGames(username) {
+  // fetch current month; if early in month (<= 5 days in), also fetch previous
+  const now   = new Date();
+  const yyyy  = now.getFullYear();
+  const mm    = String(now.getMonth() + 1).padStart(2, '0');
+  const urls  = [`https://api.chess.com/pub/player/${encodeURIComponent(username.toLowerCase())}/games/${yyyy}/${mm}`];
+  if (now.getDate() <= 5) {
+    const prev  = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+    const py    = prev.getFullYear();
+    const pm    = String(prev.getMonth() + 1).padStart(2, '0');
+    urls.push(`https://api.chess.com/pub/player/${encodeURIComponent(username.toLowerCase())}/games/${py}/${pm}`);
+  }
+  const results = await Promise.all(urls.map(u => fetch(u).then(r => r.ok ? r.json() : { games: [] })));
+  const games   = results.flatMap(d => d.games || []);
+  games.sort((a, b) => (b.end_time || 0) - (a.end_time || 0));
+  return games.slice(0, 30).map(g => {
+    const isWhite  = g.white?.username?.toLowerCase() === username.toLowerCase();
+    const opponent = (isWhite ? g.black?.username : g.white?.username) || '?';
+    const myColor  = isWhite ? 'white' : 'black';
+    const myResult = isWhite ? g.white?.result : g.black?.result;
+    let result;
+    if (myResult === 'win')                                                        result = '1–0';
+    else if (['resigned','checkmated','timeout','abandoned','lose'].includes(myResult)) result = '0–1';
+    else                                                                           result = '½–½';
+    if (myColor === 'black' && result !== '½–½') result = result === '1–0' ? '0–1' : '1–0';
+    const openingMatch = g.pgn?.match(/\[Opening "([^"]+)"\]/);
+    return {
+      platform: 'chesscom',
+      pgn:      g.pgn,
+      opponent,
+      result,
+      myColor,
+      speed:    g.time_class,
+      opening:  openingMatch?.[1],
+      date:     new Date((g.end_time || 0) * 1000),
+    };
+  });
+}
+
+// ── Game picker modal ─────────────────────────────────────────────────────────
+
+const gamesModal = document.getElementById('gamesModal');
+let _pendingGames = [];
+
+async function openGamesModal() {
+  const settings = loadSettings();
+  if (!settings.lichessUser && !settings.chesscomUser) {
+    openSettingsModal();
+    return;
+  }
+
+  gamesModal.classList.add('is-open');
+  const body = document.getElementById('gamesModalBody');
+  body.innerHTML = '<p class="modal-loading">Loading games…</p>';
+  document.getElementById('gamesAddBtn').disabled = true;
+
+  const fetches = [];
+  if (settings.lichessUser)  fetches.push(fetchLichessGames(settings.lichessUser));
+  if (settings.chesscomUser) fetches.push(fetchChesscomGames(settings.chesscomUser));
+
+  const settled = await Promise.allSettled(fetches);
+  const games   = settled.flatMap(r => r.status === 'fulfilled' ? r.value : []);
+  const errors  = settled.filter(r => r.status === 'rejected').map(r => r.reason?.message || 'Unknown error');
+  games.sort((a, b) => b.date - a.date);
+  _pendingGames = games;
+  _renderGameList(body, games, errors);
+}
+
+function closeGamesModal() {
+  gamesModal.classList.remove('is-open');
+  _pendingGames = [];
+}
+
+function _renderGameList(body, games, errors) {
+  let html = '';
+  if (errors.length) {
+    html += `<div class="modal-error">${errors.map(escapeHtml).join('<br>')}</div>`;
+  }
+  if (games.length === 0) {
+    body.innerHTML = html + '<p class="modal-empty">No games found for this period.</p>';
+    return;
+  }
+
+  html += '<div class="game-select-all"><label><input type="checkbox" id="selectAllGames"> Select all</label></div>';
+  html += '<ul class="game-list">';
+  games.forEach((g, i) => {
+    const badge   = g.platform === 'lichess'
+      ? '<span class="platform-badge platform-lichess">L</span>'
+      : '<span class="platform-badge platform-chesscom">C</span>';
+    const dateStr = g.date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+                  + '\u2009'
+                  + g.date.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false });
+    const rClass  = g.result === '1–0' ? (g.myColor === 'white' ? 'result-win' : 'result-loss')
+                  : g.result === '0–1' ? (g.myColor === 'black' ? 'result-win' : 'result-loss')
+                  : 'result-draw';
+    const opening = g.opening ? `<span class="game-opening">${escapeHtml(g.opening)}</span>` : '';
+    const speed   = g.speed   ? `<span class="game-speed">${escapeHtml(g.speed)}</span>` : '';
+    html += `<li class="game-row">
+      <label>
+        <input type="checkbox" class="game-check" data-idx="${i}">
+        ${badge}
+        <span class="game-date">${escapeHtml(dateStr)}</span>
+        <span class="game-vs">vs. <strong>${escapeHtml(g.opponent)}</strong></span>
+        <span class="game-result ${rClass}">${escapeHtml(g.result)}</span>
+        ${speed}${opening}
+      </label>
+    </li>`;
+  });
+  html += '</ul>';
+  body.innerHTML = html;
+
+  document.getElementById('selectAllGames').addEventListener('change', e => {
+    body.querySelectorAll('.game-check').forEach(cb => { cb.checked = e.target.checked; });
+    _updateAddBtn();
+  });
+  body.querySelectorAll('.game-check').forEach(cb => cb.addEventListener('change', _updateAddBtn));
+}
+
+function _updateAddBtn() {
+  const n   = document.querySelectorAll('#gamesModalBody .game-check:checked').length;
+  const btn = document.getElementById('gamesAddBtn');
+  btn.disabled    = n === 0;
+  btn.textContent = n > 0 ? `Add ${n} game${n > 1 ? 's' : ''} to diary` : 'Add to diary';
+}
+
+document.getElementById('gamesBtn').addEventListener('click', openGamesModal);
+document.getElementById('gamesClose').addEventListener('click', closeGamesModal);
+gamesModal.addEventListener('click', e => { if (e.target === gamesModal) closeGamesModal(); });
+gamesModal.addEventListener('keydown', e => { if (e.key === 'Escape') closeGamesModal(); });
+
+document.getElementById('gamesAddBtn').addEventListener('click', () => {
+  const checked = [...document.querySelectorAll('#gamesModalBody .game-check:checked')];
+  checked.forEach(cb => {
+    const g = _pendingGames[parseInt(cb.dataset.idx, 10)];
+    if (!g) return;
+    const title = `vs. ${g.opponent} (${g.result})`;
+    const cell  = newBoardCell(g.pgn || '', title, g.myColor);
+    state.cells.push(cell);
+    const el = buildBoardCell(cell);
+    document.getElementById('notebook').appendChild(el);
+    requestAnimationFrame(() => mountViewer(cell.id, cell.pgn, cell.orientation));
+  });
+  updateEmptyState();
+  scheduleAutoSave();
+  closeGamesModal();
+});
+
+// ── PGN editor dialog ─────────────────────────────────────────────────────────
+
+function openPgnEditor(cellId) {
+  const cell = getCell(cellId);
+  if (!cell) return;
+  const modal = document.getElementById('pgnEditorModal');
+  document.getElementById('pgnEditorTextarea').value = cell.pgn || '';
+  modal.classList.add('is-open');
+  document.getElementById('pgnEditorTextarea').focus();
+
+  const apply = () => {
+    const pgn = document.getElementById('pgnEditorTextarea').value.trim();
+    updateCellData(cellId, { pgn });
+    mountViewer(cellId, pgn, cell.orientation, true);
+    // If annotation panel was open, refresh it
+    const cellEl = document.querySelector(`.cell[data-id="${CSS.escape(cellId)}"]`);
+    if (cellEl?.classList.contains('edit-mode')) refreshAnnotationPanel(cellId);
+    modal.classList.remove('is-open');
+  };
+
+  // Replace listener each open to target the right cell
+  const applyBtn = document.getElementById('pgnEditorApply');
+  const newBtn   = applyBtn.cloneNode(true);
+  applyBtn.parentNode.replaceChild(newBtn, applyBtn);
+  newBtn.addEventListener('click', apply);
+  modal.addEventListener('keydown', function handler(e) {
+    if (e.key === 'Escape') { modal.classList.remove('is-open'); modal.removeEventListener('keydown', handler); }
+  }, { once: false });
+}
+
+document.getElementById('pgnEditorClose').addEventListener('click', () =>
+  document.getElementById('pgnEditorModal').classList.remove('is-open')
+);
+document.getElementById('pgnEditorModal').addEventListener('click', e => {
+  if (e.target === e.currentTarget) e.currentTarget.classList.remove('is-open');
+});
 
 // ── Boot ───────────────────────────────────────────────────────────────────────
 

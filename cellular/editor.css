@@ -334,10 +334,10 @@ body {
   width: 100%;
 }
 
-/* Edit mode: side-by-side with annotation panel */
+/* Edit mode: board (left, Chessground) + annotation panel (right, inline) */
 .cell-board.edit-mode .cell-body {
   display: flex;
-  align-items: flex-start;   /* board sizes from aspect-ratio, not from sibling height */
+  align-items: flex-start;
 }
 .cell-board.edit-mode .board-viewer-wrap {
   flex: 0 0 58%;
@@ -345,9 +345,7 @@ body {
   width: 58%;
 }
 
-/* Edit mode: no mode-switch needed for annotation panel */
-
-/* Annotation panel (right side in annotate mode) — hidden by default */
+/* Annotation panel — hidden by default, side column in edit mode */
 .annotation-panel {
   display: none;
   flex: 1;
@@ -357,15 +355,17 @@ body {
   overflow-y: auto;
   max-height: 520px;
 }
-.annotation-panel.is-visible {
-  display: flex;
-}
+.annotation-panel.is-visible { display: flex; }
 .annotation-list {
   flex: 1;
   padding: 0.5rem 0;
 }
+/* annotation rows: compact label + inline editable note */
 .annotation-row {
-  padding: 0.4rem 0.75rem;
+  display: flex;
+  align-items: baseline;
+  gap: 0.4rem;
+  padding: 0.35rem 0.75rem;
   border-bottom: 1px solid var(--border);
 }
 .annotation-row:last-child { border-bottom: none; }
@@ -374,25 +374,41 @@ body {
   font-weight: 600;
   color: var(--text-muted);
   font-family: var(--font-mono);
-  margin-bottom: 0.2rem;
+  flex-shrink: 0;
+  white-space: nowrap;
+  line-height: 1.5;
+  cursor: pointer;
+  border-radius: 3px;
+  padding: 0 0.2em;
 }
-.annotation-textarea {
-  width: 100%;
-  border: none;
-  background: transparent;
-  font-family: var(--font);
+.annotation-move-label:hover { color: var(--accent); background: color-mix(in srgb, var(--accent) 8%, transparent); }
+/* Highlight the currently-navigated move row */
+.annotation-row.active { background: color-mix(in srgb, var(--accent) 8%, transparent); }
+.annotation-row.active .annotation-move-label { color: var(--accent); }
+/* Inline contenteditable annotation — looks like plain text, editable on click */
+.annotation-note {
+  flex: 1;
+  min-width: 0;
+  min-height: 1.4em;
   font-size: 0.82rem;
   line-height: 1.5;
   color: var(--text);
-  resize: none;
+  border-radius: 3px;
+  padding: 0 0.25em;
+  cursor: text;
+  white-space: pre-wrap;
+  word-break: break-word;
   outline: none;
-  padding: 0;
-  field-sizing: content;  /* auto-grow with content */
-  min-height: 2.4rem;
 }
-.annotation-textarea::placeholder { color: var(--text-faint); }
-.annotation-textarea:focus { background: color-mix(in srgb, var(--accent) 4%, transparent); border-radius: 3px; }
-.annotation-row:has(.annotation-textarea:focus) {
+.annotation-note:empty::before {
+  content: attr(data-placeholder);
+  color: var(--text-faint);
+  pointer-events: none;
+}
+.annotation-note:focus {
+  background: color-mix(in srgb, var(--accent) 5%, transparent);
+}
+.annotation-row:has(.annotation-note:focus) {
   background: color-mix(in srgb, var(--accent) 4%, transparent);
 }
 .annotation-panel-empty {
@@ -416,11 +432,28 @@ body {
   opacity: 0.6;
 }
 
-/* Edit-mode chessground board */
-.cg-edit-board {
+/* Edit-mode chessground board — kept for potential future use */
+.cg-edit-board { width: 100%; aspect-ratio: 1; display: block; }
+
+/* PGN editor textarea */
+.pgn-editor-textarea {
   width: 100%;
-  aspect-ratio: 1;
-  display: block;
+  min-height: 220px;
+  padding: 0.6rem 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 0.82rem;
+  line-height: 1.6;
+  resize: vertical;
+  outline: none;
+  box-sizing: border-box;
+}
+.pgn-editor-textarea:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 20%, transparent);
 }
 /* ── Sidebar ──────────────────────────────────────────────── */
 #sidebar {
@@ -522,8 +555,221 @@ body.sidebar-open #notebook-area { margin-left: var(--sidebar-w); }
 #importLabel { display: flex; align-items: center; justify-content: center; }
 /* ── Responsive ────────────────────────────────────────────── */
 @media (max-width: 640px) {
-  .board-viewer-wrap { flex: 0 0 100% !important; max-width: 100% !important; }
-  .cell-board .cell-body { flex-direction: column; }
+  .board-viewer-wrap { flex: 0 0 100% !important; max-width: 100% !important; width: 100% !important; }
+  .cell-board.edit-mode .cell-body { flex-direction: column; }
   .annotation-panel.is-visible { max-height: 260px; border-left: none; border-top: 1px solid var(--border); }
   .board-title-input { max-width: 140px; }
+}
+
+/* ── Modals ─────────────────────────────────────────────────── */
+.modal-overlay {
+  display: none;
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.45);
+  z-index: 10001;
+  align-items: center;
+  justify-content: center;
+  padding: 1rem;
+}
+.modal-overlay.is-open { display: flex; }
+
+.modal-box {
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  width: 100%;
+  max-width: 440px;
+  max-height: 88vh;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.18);
+}
+.modal-box--wide { max-width: 660px; }
+
+.modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.75rem 1rem;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+.modal-header h3 { margin: 0; font-size: 1rem; font-weight: 600; color: var(--text); }
+
+.modal-body { flex: 1; overflow-y: auto; padding: 1rem; }
+
+.modal-footer {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.5rem;
+  padding: 0.75rem 1rem;
+  border-top: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.modal-loading, .modal-empty {
+  color: var(--text-muted);
+  font-size: 0.9rem;
+  text-align: center;
+  padding: 2.5rem 0;
+}
+.modal-error {
+  color: var(--danger);
+  font-size: 0.82rem;
+  padding: 0.5rem 0.6rem;
+  background: color-mix(in srgb, var(--danger) 8%, transparent);
+  border-radius: 6px;
+  margin-bottom: 0.75rem;
+}
+
+/* ── Settings form ───────────────────────────────────────────── */
+.settings-field { margin-bottom: 1rem; }
+.settings-field label {
+  display: block;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin-bottom: 0.35rem;
+}
+.settings-field input[type="text"] {
+  width: 100%;
+  padding: 0.45rem 0.65rem;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--text);
+  font-size: 0.9rem;
+  font-family: var(--font);
+  outline: none;
+  box-sizing: border-box;
+}
+.settings-field input[type="text"]:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 20%, transparent);
+}
+.settings-field select {
+  width: 100%;
+  padding: 0.45rem 0.65rem;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--text);
+  font-size: 0.9rem;
+  font-family: var(--font);
+  outline: none;
+  box-sizing: border-box;
+  cursor: pointer;
+}
+.settings-field select:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 20%, transparent);
+}
+
+/* ── Insert-after dropdown ───────────────────────────────────── */
+.cell-insert-wrap { position: relative; }
+.cell-insert-dropdown {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 3px);
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0.25rem;
+  z-index: 500;
+  min-width: 100px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12);
+  display: none;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+.cell-insert-wrap.is-open .cell-insert-dropdown { display: flex; }
+.cell-insert-dropdown button {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 0.3rem 0.6rem;
+  font-size: 0.8rem;
+  border-radius: 4px;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  color: var(--text);
+  font-family: var(--font);
+  line-height: 1.4;
+}
+.cell-insert-dropdown button:hover { background: var(--bg-hover); }
+
+/* ── Game picker list ────────────────────────────────────────── */
+.game-select-all {
+  padding: 0.35rem 0.5rem 0.55rem;
+  font-size: 0.82rem;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 0.2rem;
+}
+.game-select-all label { display: flex; align-items: center; gap: 0.4rem; cursor: pointer; }
+
+.game-list { list-style: none; padding: 0; margin: 0; }
+
+.game-row + .game-row { border-top: 1px solid var(--border); }
+
+.game-row label {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+  row-gap: 0.15rem;
+  padding: 0.55rem 0.4rem;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 0.83rem;
+}
+.game-row label:hover { background: var(--bg-hover); }
+
+.platform-badge {
+  font-size: 0.68rem;
+  font-weight: 700;
+  padding: 0.1rem 0.32rem;
+  border-radius: 3px;
+  flex-shrink: 0;
+  line-height: 1.6;
+}
+.platform-lichess  { background: color-mix(in srgb, #699 18%, transparent); color: #2a7070; }
+.platform-chesscom { background: color-mix(in srgb, #5a9 18%, transparent); color: #2a6e40; }
+@media (prefers-color-scheme: dark) {
+  .platform-lichess  { background: #1a3838; color: #55b8b8; }
+  .platform-chesscom { background: #1a3828; color: #55b878; }
+}
+
+.game-date {
+  color: var(--text-muted);
+  font-size: 0.77rem;
+  font-family: var(--font-mono);
+  flex-shrink: 0;
+  min-width: 9ch;
+}
+.game-vs        { flex: 1; min-width: 0; }
+.game-vs strong { font-weight: 600; }
+.game-result    { font-size: 0.78rem; font-weight: 600; flex-shrink: 0; }
+.result-win     { color: #16a34a; }
+.result-loss    { color: var(--danger); }
+.result-draw    { color: var(--text-muted); }
+@media (prefers-color-scheme: dark) { .result-win { color: #4ade80; } }
+
+.game-speed {
+  font-size: 0.75rem;
+  color: var(--text-faint);
+  flex-shrink: 0;
+  text-transform: capitalize;
+}
+.game-opening {
+  width: 100%;
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  font-style: italic;
+  padding-left: 1.7rem;
+  margin-top: -0.05rem;
 }

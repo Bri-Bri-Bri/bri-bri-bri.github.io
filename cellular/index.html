@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Cellular — Chess Notebook</title>
+  <title>Cellular — Chess Diary</title>
   <!-- shared navbar: prevents theme flash + injects site nav -->
   <script src="../shared/navbar.js"></script>
   <link rel="stylesheet" href="https://unpkg.com/@lichess-org/pgn-viewer@2.6.0/dist/lichess-pgn-viewer.css">
@@ -15,14 +15,16 @@
     <button id="sidebarToggle" class="btn-icon" title="Toggle diary sidebar">☰</button>
     <span class="logo">♟ Cellular</span>
     <div class="menu-section">
-      <button id="addTextBtn" class="btn btn-ghost">+ Text</button>
-      <button id="addBoardBtn" class="btn btn-ghost">+ Board</button>
-    </div>
-    <div class="spacer"></div>
-    <div class="menu-section">
       <button id="newEntryBtn" class="btn btn-secondary">+ New Entry</button>
       <button id="exportBtn" class="btn btn-primary">Export Entry</button>
     </div>
+    <div class="spacer"></div>
+    <div class="menu-section">
+      <button id="addTextBtn" class="btn btn-ghost">+ Text</button>
+      <button id="addBoardBtn" class="btn btn-ghost">+ Board</button>
+      <button id="gamesBtn" class="btn btn-ghost" title="Import games from Lichess / Chess.com">📥 Games</button>
+    </div>
+    <button id="settingsBtn" class="btn-icon" title="Settings">⚙</button>
   </header>
 
   <aside id="sidebar">
@@ -58,6 +60,55 @@
   </div>
 
   </div><!-- #notebook-area -->
+
+  <!-- Settings modal -->
+  <div id="settingsModal" class="modal-overlay" role="dialog" aria-modal="true" aria-label="Settings">
+    <div class="modal-box">
+      <div class="modal-header">
+        <h3>Settings</h3>
+        <button class="btn-icon" id="settingsClose" title="Close">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="settings-field">
+          <label for="settingsLichess">Lichess username</label>
+          <input type="text" id="settingsLichess" placeholder="e.g. thibault" autocomplete="off" spellcheck="false">
+        </div>
+        <div class="settings-field">
+          <label for="settingsChesscom">Chess.com username</label>
+          <input type="text" id="settingsChesscom" placeholder="e.g. hikaru" autocomplete="off" spellcheck="false">
+        </div>
+        <div class="settings-field">
+          <label for="settingsBoardTheme">Board theme</label>
+          <select id="settingsBoardTheme">
+            <option value="auto">Auto (follows site theme)</option>
+            <option value="brown">Brown — classic</option>
+            <option value="blue">Blue</option>
+            <option value="green">Green</option>
+            <option value="purple">Purple</option>
+          </select>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-primary" id="settingsSave">Save</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Game picker modal -->
+  <div id="gamesModal" class="modal-overlay" role="dialog" aria-modal="true" aria-label="Import games">
+    <div class="modal-box modal-box--wide">
+      <div class="modal-header">
+        <h3>Import games</h3>
+        <button class="btn-icon" id="gamesClose" title="Close">✕</button>
+      </div>
+      <div id="gamesModalBody" class="modal-body">
+        <!-- populated by JS -->
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-primary" id="gamesAddBtn" disabled>Add to diary</button>
+      </div>
+    </div>
+  </div>
 
   <script type="module" src="editor.js"></script>
 </body>
