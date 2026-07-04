@@ -300,6 +300,8 @@ body {
 
 /* ── Board cell ────────────────────────────────────────────── */
 .cell-board .cell-body {
+  display: flex;
+  align-items: flex-start;
   min-height: 340px;
 }
 
@@ -320,34 +322,18 @@ body {
 .board-title-input:focus { background: var(--bg-hover); }
 .board-title-input::placeholder { color: var(--text-faint); }
 
-/* View mode: board-viewer-wrap fills cell body; pgn-viewer handles board+moves internally */
 .board-viewer-wrap {
-  width: 100%;
-  min-height: 340px;
+  flex: 0 0 58%;
+  max-width: 58%;
+  width: 58%;
   padding: 0.75rem;
   background: var(--bg-subtle);
   box-sizing: border-box;
 }
 
-/* pgn-viewer fills its wrap */
-.board-viewer-wrap .lpv {
-  width: 100%;
-}
-
-/* Edit mode: board (left, Chessground) + annotation panel (right, inline) */
-.cell-board.edit-mode .cell-body {
-  display: flex;
-  align-items: flex-start;
-}
-.cell-board.edit-mode .board-viewer-wrap {
-  flex: 0 0 58%;
-  max-width: 58%;
-  width: 58%;
-}
-
-/* Annotation panel — hidden by default, side column in edit mode */
+/* Annotation panel — always visible beside the board */
 .annotation-panel {
-  display: none;
+  display: flex;
   flex: 1;
   min-width: 0;
   flex-direction: column;
@@ -355,7 +341,6 @@ body {
   overflow-y: auto;
   max-height: 520px;
 }
-.annotation-panel.is-visible { display: flex; }
 .annotation-list {
   flex: 1;
   padding: 0.5rem 0;
@@ -417,23 +402,63 @@ body {
   color: var(--text-faint);
 }
 
-/* pgn-viewer overrides */
-.lpv { --lpv-bg: transparent !important; }
-.lpv__board { border-radius: 5px; overflow: hidden; }
+/* pgn-viewer styles are retained for use in exported HTML */
 
-/* Hide menu items we've replicated in our own toolbar */
-.lpv__menu__flip { display: none !important; }
+/* Chessground board */
+.cg-board { width: 100%; aspect-ratio: 1; display: block; }
 
-/* Mark the Lichess-opening links with an ↗ indicator */
-.lpv__menu__analysis::after,
-.lpv__menu__practice::after {
-  content: ' ↗';
-  font-size: 0.8em;
-  opacity: 0.6;
+/* Undo button — hidden until edit mode */
+.undo-btn { display: none !important; }
+.undo-btn.is-visible { display: inline-flex !important; }
+
+/* ── Game info header ──────────────────────────────────────── */
+.board-game-header {
+  padding: 0.35rem 0.75rem;
+  background: var(--bg-subtle);
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  font-size: 0.8rem;
 }
+.board-game-header[hidden] { display: none; }
+.gh-players { display: flex; align-items: center; gap: 0.3rem; }
+.gh-white, .gh-black { font-weight: 600; color: var(--text); }
+.gh-vs { color: var(--text-faint); font-size: 0.72rem; }
+.gh-result { font-weight: 600; color: var(--text-muted); margin-left: 0.15rem; }
+.gh-meta { display: flex; gap: 0.4rem; align-items: center; color: var(--text-muted); font-size: 0.75rem; }
+.gh-opening { font-style: italic; max-width: 22ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
-/* Edit-mode chessground board — kept for potential future use */
-.cg-edit-board { width: 100%; aspect-ratio: 1; display: block; }
+/* ── Annotation nav bar ─────────────────────────────────────── */
+.annotation-nav {
+  display: flex;
+  align-items: center;
+  gap: 0.05rem;
+  padding: 0.2rem 0.4rem;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-subtle);
+  flex-shrink: 0;
+}
+.nav-ply-counter {
+  flex: 1;
+  font-size: 0.72rem;
+  font-family: var(--font-mono);
+  color: var(--text-faint);
+  text-align: center;
+}
+.nav-game-link {
+  font-size: 0.75rem;
+  font-weight: 500;
+  color: var(--text-faint);
+  text-decoration: none;
+  padding: 0.15rem 0.3rem;
+  border-radius: 4px;
+  line-height: 1.4;
+  margin-left: 0.25rem;
+}
+.nav-game-link:hover { color: var(--accent); background: var(--bg-hover); }
+.nav-game-link[hidden] { display: none; }
 
 /* PGN editor textarea */
 .pgn-editor-textarea {
@@ -555,9 +580,9 @@ body.sidebar-open #notebook-area { margin-left: var(--sidebar-w); }
 #importLabel { display: flex; align-items: center; justify-content: center; }
 /* ── Responsive ────────────────────────────────────────────── */
 @media (max-width: 640px) {
-  .board-viewer-wrap { flex: 0 0 100% !important; max-width: 100% !important; width: 100% !important; }
-  .cell-board.edit-mode .cell-body { flex-direction: column; }
-  .annotation-panel.is-visible { max-height: 260px; border-left: none; border-top: 1px solid var(--border); }
+  .cell-board .board-viewer-wrap { flex: 0 0 100% !important; max-width: 100% !important; width: 100% !important; }
+  .cell-board .cell-body { flex-direction: column; }
+  .annotation-panel { max-height: 260px; border-left: none; border-top: 1px solid var(--border); }
   .board-title-input { max-width: 140px; }
 }
 

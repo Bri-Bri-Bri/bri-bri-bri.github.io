@@ -110,6 +110,23 @@
     </div>
   </div>
 
+  <!-- PGN editor modal -->
+  <div id="pgnEditorModal" class="modal-overlay" role="dialog" aria-modal="true" aria-label="Edit PGN">
+    <div class="modal-box">
+      <div class="modal-header">
+        <h3>Edit PGN</h3>
+        <button class="btn-icon" id="pgnEditorClose" title="Close">✕</button>
+      </div>
+      <div class="modal-body">
+        <textarea id="pgnEditorTextarea" class="pgn-editor-textarea" placeholder="Paste PGN or FEN here…" spellcheck="false"></textarea>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" id="pgnEditorClose2">Cancel</button>
+        <button class="btn btn-primary" id="pgnEditorApply">Apply</button>
+      </div>
+    </div>
+  </div>
+
   <script type="module" src="editor.js"></script>
 </body>
 </html>
