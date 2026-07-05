@@ -439,6 +439,8 @@ body {
   border-bottom: 1px solid var(--border);
   background: var(--bg-subtle);
   flex-shrink: 0;
+  top: 0;
+  position: sticky;
 }
 .nav-ply-counter {
   flex: 1;
