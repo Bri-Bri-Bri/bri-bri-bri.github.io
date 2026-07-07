@@ -1,0 +1,471 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" media="(prefers-color-scheme: light)" content="#3b82f6">
+  <meta name="theme-color" media="(prefers-color-scheme: dark)"  content="#0f172a">
+  <title>World Map — Bri</title>
+  <link rel="stylesheet" href="../style.css">
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin/>
+  <script src="../shared/navbar.js"></script>
+  <style>
+    body { overflow: hidden; }
+
+    #map {
+      position: fixed;
+      top: var(--nav-h, 44px);
+      left: 0; right: 0;
+      bottom: 40px;
+    }
+
+    /* ── Info bar ─────────────────────────────────────────────────────────── */
+    #info-bar {
+      position: fixed;
+      bottom: 0; left: 0; right: 0;
+      height: 40px;
+      background: var(--surface);
+      border-top: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      padding: 0 0.85rem;
+      gap: 0.65rem;
+      font-size: 0.82rem;
+      color: var(--muted);
+      z-index: 500;
+    }
+
+    #hover-info {
+      flex: 1;
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    #hover-name    { color: var(--text); font-weight: 600; }
+    #hover-country { color: var(--muted); }
+
+    .bar-btn {
+      flex-shrink: 0;
+      padding: 0.22rem 0.6rem;
+      font-size: 0.78rem;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      background: var(--surface);
+      color: var(--text);
+      cursor: pointer;
+      transition: background 0.15s;
+      line-height: 1.5;
+    }
+    .bar-btn:hover  { background: var(--border); }
+    .bar-btn.active { background: var(--primary); color: #fff; border-color: var(--primary); }
+
+    /* ── Full-page loading overlay ────────────────────────────────────────── */
+    #loading {
+      position: fixed;
+      top: var(--nav-h, 44px);
+      left: 0; right: 0; bottom: 0;
+      background: var(--bg);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 0.65rem;
+      z-index: 2000;
+      font-size: 0.88rem;
+      color: var(--muted);
+      transition: opacity 0.3s;
+    }
+    #loading.hidden { opacity: 0; pointer-events: none; }
+
+    /* ── Inline status pill (subdivision loading) ─────────────────────────── */
+    #status-pill {
+      position: absolute;
+      top: 10px; left: 50%; transform: translateX(-50%);
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      padding: 5px 14px 5px 10px;
+      font-size: 0.8rem;
+      color: var(--muted);
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      z-index: 600;
+      box-shadow: var(--shadow);
+      white-space: nowrap;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.2s;
+    }
+    #status-pill.visible { opacity: 1; pointer-events: auto; }
+
+    .spinner {
+      width: 14px; height: 14px;
+      border: 2px solid var(--border);
+      border-top-color: var(--primary);
+      border-radius: 50%;
+      animation: spin 0.7s linear infinite;
+      flex-shrink: 0;
+    }
+    /* Larger spinner for full-page loading */
+    #loading .spinner { width: 26px; height: 26px; border-width: 3px; }
+
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* ── Leaflet tooltip ──────────────────────────────────────────────────── */
+    .leaflet-tooltip.geo-tip {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      color: var(--text);
+      font-size: 0.78rem;
+      font-family: system-ui, -apple-system, sans-serif;
+      padding: 3px 7px;
+      border-radius: 5px;
+      box-shadow: var(--shadow);
+      pointer-events: none;
+    }
+    .leaflet-tooltip.geo-tip::before { display: none; }
+  </style>
+</head>
+<body class="page">
+
+  <!-- Full-page overlay: only shown while initial countries data loads -->
+  <div id="loading">
+    <div class="spinner"></div>
+    <span id="load-status">Loading world map…</span>
+  </div>
+
+  <div id="map">
+    <!-- Inline status pill: shown while admin-1 data loads on first drill-down -->
+    <div id="status-pill">
+      <div class="spinner"></div>
+      <span id="pill-text">Loading subdivisions…</span>
+    </div>
+  </div>
+
+  <div id="info-bar">
+    <span id="hover-info">
+      <span id="hover-name">Click a country to explore its regions</span>
+      <span id="hover-country"></span>
+    </span>
+    <button class="bar-btn" id="back-btn"     style="display:none">← World</button>
+    <button class="bar-btn" id="label-toggle" title="Show/hide all labels (L)">Show labels</button>
+    <button class="bar-btn" id="world-btn"    title="Reset to world view (Esc)">🌍 World</button>
+  </div>
+
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin></script>
+  <script>
+  (function () {
+    'use strict';
+
+    // NE v5.1.2 — pinned commit for stability
+    var COMMIT  = '789c9904087846cc3361302857aa2e76b0ae71ff';
+    var BASE    = 'https://raw.githubusercontent.com/nvkelso/natural-earth-vector/' + COMMIT + '/geojson/';
+    var URL_C0  = BASE + 'ne_110m_admin_0_countries.geojson';   // ~300 KB — world countries
+    var URL_A1  = BASE + 'ne_50m_admin_1_states_provinces.geojson'; // ~6 MB — all admin-1
+
+    // ── Theme-aware colors ─────────────────────────────────────────────────
+    function isDark() {
+      return document.documentElement.getAttribute('data-theme') === 'dark' ||
+        (!document.documentElement.getAttribute('data-theme') &&
+         window.matchMedia('(prefers-color-scheme: dark)').matches);
+    }
+    function mkColors() {
+      var d = isDark();
+      return {
+        ocean:        d ? '#0c1a26' : '#c5d8e8',
+        countryFill:  d ? '#1e2e3e' : '#dce3e9',
+        countryBord:  d ? '#2d4558' : '#8fa0b0',
+        countryDim:   d ? '#131e2a' : '#eaeef2',   // world layer when in country mode
+        admin1Fill:   d ? '#243850' : '#d0dce6',
+        admin1Bord:   d ? '#3a5470' : '#7a96aa',
+        hoverFill:    d ? '#60a5fa' : '#3b82f6',
+        selectedFill: d ? '#1d3a5c' : '#bfd3e8',   // the clicked country (background)
+      };
+    }
+    var C = mkColors();
+
+    // ── Map ────────────────────────────────────────────────────────────────
+    var map = L.map('map', {
+      center: [20, 0], zoom: 2, minZoom: 2, maxZoom: 12,
+      renderer: L.canvas(), zoomControl: true,
+    });
+    function applyOcean() {
+      var el = document.querySelector('.leaflet-container');
+      if (el) el.style.background = C.ocean;
+    }
+    applyOcean();
+
+    // ── State ──────────────────────────────────────────────────────────────
+    var mode         = 'world';   // 'world' | 'country'
+    var countriesLayer = null;
+    var admin1Cache  = null;      // raw GeoJSON once fetched
+    var admin1Layer  = null;      // current country's admin-1 layer
+    var selectedAdm0 = null;      // ADM0_A3 of selected country
+    var selectedLayer= null;      // the clicked country layer ref
+    var labelsOn     = false;
+    var admin1Pending= false;     // fetch in progress?
+
+    // ── Style helpers ──────────────────────────────────────────────────────
+    function styleCountry(f) {
+      if (mode === 'country') {
+        var a3 = f && f.properties && f.properties.ADM0_A3;
+        if (a3 === selectedAdm0) {
+          return { fillColor: C.selectedFill, fillOpacity: 0.9, color: C.countryBord, weight: 1, opacity: 1 };
+        }
+        return { fillColor: C.countryDim, fillOpacity: 0.5, color: C.countryBord, weight: 0.4, opacity: 0.5 };
+      }
+      return { fillColor: C.countryFill, fillOpacity: 0.85, color: C.countryBord, weight: 0.6, opacity: 1 };
+    }
+
+    function styleAdmin1() {
+      return { fillColor: C.admin1Fill, fillOpacity: 0.85, color: C.admin1Bord, weight: 0.7, opacity: 1 };
+    }
+
+    function hoverStyle(base) {
+      return Object.assign({}, base, { fillColor: C.hoverFill, fillOpacity: 0.55, weight: (base.weight || 0.6) + 0.6 });
+    }
+
+    // ── Tooltip helpers ────────────────────────────────────────────────────
+    var TIP_HOVER = { permanent: false, sticky: true, direction: 'top', offset: [0, -6], className: 'geo-tip' };
+    var TIP_PERM  = { permanent: true, direction: 'center', className: 'geo-tip' };
+
+    function bindTip(layer, name, permanent) {
+      layer.unbindTooltip();
+      if (name) layer.bindTooltip(name, permanent ? TIP_PERM : TIP_HOVER);
+    }
+
+    // ── Info bar refs ──────────────────────────────────────────────────────
+    var nameEl    = document.getElementById('hover-name');
+    var countryEl = document.getElementById('hover-country');
+    var backBtn   = document.getElementById('back-btn');
+
+    function setHover(main, sub) {
+      nameEl.textContent    = main || '';
+      countryEl.textContent = sub  ? '  ·  ' + sub : '';
+    }
+    function clearHover() {
+      if (mode === 'world') setHover('Click a country to explore its regions');
+      else                  setHover('Hover a region to see its name');
+    }
+
+    // ── Status pill ────────────────────────────────────────────────────────
+    var pill     = document.getElementById('status-pill');
+    var pillText = document.getElementById('pill-text');
+    function showPill(msg) { pillText.textContent = msg; pill.classList.add('visible'); }
+    function hidePill()    { pill.classList.remove('visible'); }
+
+    // ── Country interaction ────────────────────────────────────────────────
+    function onCountryOver(e) {
+      var layer = e.target;
+      var base  = styleCountry(layer.feature);
+      layer.setStyle(hoverStyle(base));
+      var p = layer.feature.properties;
+      if (mode === 'world') {
+        setHover(p.NAME || p.ADMIN, p.CONTINENT);
+      }
+    }
+    function onCountryOut(e) {
+      countriesLayer.resetStyle(e.target);
+      clearHover();
+    }
+    function onCountryClick(e) {
+      var p = e.target.feature.properties;
+      drillDown(p.ADM0_A3 || '', p.ISO_A2 || '', e.target);
+    }
+
+    function onEachCountry(feature, layer) {
+      var name = feature.properties.NAME || feature.properties.ADMIN || '';
+      bindTip(layer, name, false);
+      layer.on({ mouseover: onCountryOver, mouseout: onCountryOut, click: onCountryClick });
+    }
+
+    // ── Admin-1 interaction ────────────────────────────────────────────────
+    function onAdmin1Over(e) {
+      var layer = e.target;
+      layer.setStyle(hoverStyle(styleAdmin1()));
+      var p = layer.feature.properties;
+      setHover(p.name || p.NAME, p.type_en || p.type || '');
+    }
+    function onAdmin1Out(e) {
+      if (admin1Layer) admin1Layer.resetStyle(e.target);
+      clearHover();
+    }
+    function onAdmin1Click(e) {
+      var b = e.target.getBounds();
+      if ((b.getEast() - b.getWest()) < 180) map.fitBounds(b, { padding: [20, 20] });
+    }
+
+    function onEachAdmin1(feature, layer) {
+      var name = (feature.properties.name || feature.properties.NAME || '').trim();
+      bindTip(layer, name, labelsOn);
+      layer.on({ mouseover: onAdmin1Over, mouseout: onAdmin1Out, click: onAdmin1Click });
+    }
+
+    // ── Build admin-1 layer for whichever country is currently selected ────
+    // Always reads selectedAdm0 / selectedLayer at call time, so it's safe
+    // to call from async fetch callbacks even if the user switched countries.
+    function buildAdmin1(data) {
+      if (mode !== 'country' || !selectedAdm0) return;
+
+      var a3  = selectedAdm0;
+      var iso = selectedLayer ? selectedLayer.feature.properties.ISO_A2 : '';
+
+      var features = data.features.filter(function (f) {
+        var p = f.properties;
+        return p.adm0_a3 === a3 ||
+          (iso && iso !== '-99' && p.iso_a2 &&
+           p.iso_a2.toUpperCase() === iso.toUpperCase());
+      });
+
+      if (admin1Layer) { map.removeLayer(admin1Layer); admin1Layer = null; }
+
+      if (features.length === 0) {
+        showPill('No subdivision data for this country');
+        setTimeout(hidePill, 2500);
+        return;
+      }
+
+      admin1Layer = L.geoJSON({ type: 'FeatureCollection', features: features }, {
+        style: styleAdmin1,
+        onEachFeature: onEachAdmin1,
+      }).addTo(map);
+      hidePill();
+    }
+
+    // ── Drill-down ─────────────────────────────────────────────────────────
+    function drillDown(adm0A3, isoA2, countryLayerRef) {
+      // If already showing this country, do nothing
+      if (mode === 'country' && adm0A3 === selectedAdm0) return;
+
+      mode          = 'country';
+      selectedAdm0  = adm0A3;
+      selectedLayer = countryLayerRef;
+
+      // Zoom to country bounds
+      var b = countryLayerRef.getBounds();
+      if ((b.getEast() - b.getWest()) < 180) map.fitBounds(b, { padding: [40, 40] });
+
+      // Refresh country layer styles (selected highlighted, rest dimmed)
+      countriesLayer.eachLayer(function (l) { countriesLayer.resetStyle(l); });
+
+      backBtn.style.display = '';
+      clearHover();
+
+      if (admin1Cache) {
+        buildAdmin1(admin1Cache);
+      } else if (!admin1Pending) {
+        admin1Pending = true;
+        showPill('Loading subdivisions…');
+        fetch(URL_A1)
+          .then(function (r) {
+            if (!r.ok) throw new Error('HTTP ' + r.status);
+            return r.json();
+          })
+          .then(function (data) {
+            admin1Cache   = data;
+            admin1Pending = false;
+            // Build for whatever country is selected NOW (may differ from the
+            // country that originally triggered this fetch).
+            buildAdmin1(data);
+          })
+          .catch(function (err) {
+            admin1Pending = false;
+            showPill('Failed to load subdivision data');
+            setTimeout(hidePill, 3000);
+            console.error('admin-1 load error:', err);
+          });
+      }
+      // If fetch is in progress: selectedAdm0 is now updated; buildAdmin1 will
+      // use it when the fetch resolves — no stale data.
+    }
+
+    // ── Back to world ──────────────────────────────────────────────────────
+    function goWorld() {
+      mode = 'world';
+      selectedAdm0  = null;
+      selectedLayer = null;
+      if (admin1Layer) { map.removeLayer(admin1Layer); admin1Layer = null; }
+      countriesLayer.eachLayer(function (l) { countriesLayer.resetStyle(l); });
+      backBtn.style.display = 'none';
+      // Restore hover tooltips on countries
+      if (labelsOn) {
+        countriesLayer.eachLayer(function (l) {
+          var name = l.feature.properties.NAME || l.feature.properties.ADMIN || '';
+          bindTip(l, name, true);
+        });
+      }
+      map.setView([20, 0], 2);
+      clearHover();
+    }
+
+    // ── Load countries ─────────────────────────────────────────────────────
+    var loadStatus = document.getElementById('load-status');
+
+    fetch(URL_C0)
+      .then(function (r) {
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        loadStatus.textContent = 'Parsing…';
+        return r.json();
+      })
+      .then(function (data) {
+        countriesLayer = L.geoJSON(data, {
+          style: styleCountry,
+          onEachFeature: onEachCountry,
+        }).addTo(map);
+
+        var overlay = document.getElementById('loading');
+        overlay.classList.add('hidden');
+        setTimeout(function () { if (overlay.parentNode) overlay.parentNode.removeChild(overlay); }, 380);
+      })
+      .catch(function (err) {
+        loadStatus.textContent = 'Failed to load map. Check your connection.';
+        console.error('countries load error:', err);
+      });
+
+    // ── Controls ───────────────────────────────────────────────────────────
+    backBtn.addEventListener('click', goWorld);
+
+    document.getElementById('world-btn').addEventListener('click', function () {
+      if (mode === 'country') goWorld();
+      else map.setView([20, 0], 2);
+    });
+
+    document.getElementById('label-toggle').addEventListener('click', function () {
+      labelsOn = !labelsOn;
+      this.classList.toggle('active', labelsOn);
+      this.textContent = labelsOn ? 'Hide labels' : 'Show labels';
+      // Toggle tooltips on whichever layer is active
+      var activeLayer = (mode === 'country' && admin1Layer) ? admin1Layer : countriesLayer;
+      if (!activeLayer) return;
+      activeLayer.eachLayer(function (layer) {
+        var p    = layer.feature.properties;
+        var name = (p.name || p.NAME || p.ADMIN || '').trim();
+        bindTip(layer, name, labelsOn);
+      });
+    });
+
+    document.addEventListener('keydown', function (e) {
+      if (e.key === 'l' || e.key === 'L') document.getElementById('label-toggle').click();
+      if (e.key === 'Escape') { if (mode === 'country') goWorld(); else map.setView([20, 0], 2); }
+    });
+
+    // ── Theme reactivity ───────────────────────────────────────────────────
+    function recolor() {
+      C = mkColors();
+      applyOcean();
+      if (countriesLayer) countriesLayer.setStyle(styleCountry);
+      if (admin1Layer)    admin1Layer.setStyle(styleAdmin1);
+    }
+    new MutationObserver(recolor).observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
+    window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', function () {
+      if (!document.documentElement.getAttribute('data-theme')) recolor();
+    });
+
+  }());
+  </script>
+
+</body>
+</html>
