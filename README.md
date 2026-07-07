@@ -47,7 +47,7 @@ An interactive world map for exploring and learning country subdivisions (states
 Geography data comes from [Natural Earth](https://www.naturalearthdata.com/), a public domain dataset maintained by cartographers. Two files are fetched at runtime from the [natural-earth-vector](https://github.com/nvkelso/natural-earth-vector) GitHub repository:
 
 - **`ne_110m_admin_0_countries.geojson`** (~300 KB) — world country polygons at 1:110m scale, loaded on page open.
-- **`ne_50m_admin_1_states_provinces.geojson`** (~6 MB) — all admin-1 subdivisions at 1:50m scale, fetched lazily on the first country click and cached in memory for the rest of the session.
+- **`ne_10m_admin_1_states_provinces.geojson`** (~38 MB raw, ~9 MB compressed) — all admin-1 subdivisions at 1:10m scale, fetched lazily on the first country click and cached in memory for the rest of the session.
 
 No data files are stored in this repository.
 

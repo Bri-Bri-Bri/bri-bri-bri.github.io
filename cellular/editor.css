@@ -635,6 +635,16 @@ body.sidebar-open #notebook-area { margin-left: var(--sidebar-w); }
   border-top: 1px solid var(--border);
   flex-shrink: 0;
 }
+.modal-footer-option {
+  margin-right: auto;
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.85rem;
+  color: var(--text-muted);
+  cursor: pointer;
+  user-select: none;
+}
 
 .modal-loading, .modal-empty {
   color: var(--text-muted);
@@ -662,7 +672,8 @@ body.sidebar-open #notebook-area { margin-left: var(--sidebar-w); }
   letter-spacing: 0.04em;
   margin-bottom: 0.35rem;
 }
-.settings-field input[type="text"] {
+.settings-field input[type="text"],
+.settings-field input[type="number"] {
   width: 100%;
   padding: 0.45rem 0.65rem;
   border: 1px solid var(--border);
@@ -674,7 +685,8 @@ body.sidebar-open #notebook-area { margin-left: var(--sidebar-w); }
   outline: none;
   box-sizing: border-box;
 }
-.settings-field input[type="text"]:focus {
+.settings-field input[type="text"]:focus,
+.settings-field input[type="number"]:focus {
   border-color: var(--accent);
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 20%, transparent);
 }

@@ -1044,6 +1044,7 @@ function openSettingsModal() {
   const s = loadSettings();
   document.getElementById('settingsLichess').value     = s.lichessUser  || '';
   document.getElementById('settingsChesscom').value    = s.chesscomUser || '';
+  document.getElementById('settingsMaxGames').value    = s.maxGames     || 30;
   document.getElementById('settingsBoardTheme').value  = s.boardTheme   || 'auto';
   settingsModal.classList.add('is-open');
 }
@@ -1058,6 +1059,7 @@ document.getElementById('settingsSave').addEventListener('click', () => {
   saveSettings({
     lichessUser:  document.getElementById('settingsLichess').value.trim(),
     chesscomUser: document.getElementById('settingsChesscom').value.trim(),
+    maxGames:     parseInt(document.getElementById('settingsMaxGames').value, 10) || 30,
     boardTheme:   document.getElementById('settingsBoardTheme').value,
   });
   closeSettingsModal();
@@ -1066,9 +1068,9 @@ document.getElementById('settingsSave').addEventListener('click', () => {
 
 // ── Game APIs ─────────────────────────────────────────────────────────────────
 
-async function fetchLichessGames(username) {
+async function fetchLichessGames(username, max) {
   const res = await fetch(
-    `https://lichess.org/api/games/user/${encodeURIComponent(username)}?max=30&pgnInJson=true&opening=true&tags=true`,
+    `https://lichess.org/api/games/user/${encodeURIComponent(username)}?max=${max}&pgnInJson=true&opening=true&tags=true`,
     { headers: { Accept: 'application/x-ndjson' } }
   );
   if (!res.ok) throw new Error(`Lichess ${res.status}: could not load games`);
@@ -1092,7 +1094,7 @@ async function fetchLichessGames(username) {
   });
 }
 
-async function fetchChesscomGames(username) {
+async function fetchChesscomGames(username, max) {
   // fetch current month; if early in month (<= 5 days in), also fetch previous
   const now   = new Date();
   const yyyy  = now.getFullYear();
@@ -1107,7 +1109,7 @@ async function fetchChesscomGames(username) {
   const results = await Promise.all(urls.map(u => fetch(u).then(r => r.ok ? r.json() : { games: [] })));
   const games   = results.flatMap(d => d.games || []);
   games.sort((a, b) => (b.end_time || 0) - (a.end_time || 0));
-  return games.slice(0, 30).map(g => {
+  return games.slice(0, max).map(g => {
     const isWhite  = g.white?.username?.toLowerCase() === username.toLowerCase();
     const opponent = (isWhite ? g.black?.username : g.white?.username) || '?';
     const myColor  = isWhite ? 'white' : 'black';
@@ -1148,9 +1150,10 @@ async function openGamesModal() {
   body.innerHTML = '<p class="modal-loading">Loading games…</p>';
   document.getElementById('gamesAddBtn').disabled = true;
 
+  const max     = settings.maxGames || 30;
   const fetches = [];
-  if (settings.lichessUser)  fetches.push(fetchLichessGames(settings.lichessUser));
-  if (settings.chesscomUser) fetches.push(fetchChesscomGames(settings.chesscomUser));
+  if (settings.lichessUser)  fetches.push(fetchLichessGames(settings.lichessUser, max));
+  if (settings.chesscomUser) fetches.push(fetchChesscomGames(settings.chesscomUser, max));
 
   const settled = await Promise.allSettled(fetches);
   const games   = settled.flatMap(r => r.status === 'fulfilled' ? r.value : []);
@@ -1223,10 +1226,11 @@ gamesModal.addEventListener('click', e => { if (e.target === gamesModal) closeGa
 gamesModal.addEventListener('keydown', e => { if (e.key === 'Escape') closeGamesModal(); });
 
 document.getElementById('gamesAddBtn').addEventListener('click', () => {
-  const checked = [...document.querySelectorAll('#gamesModalBody .game-check:checked')];
-  checked.forEach(cb => {
-    const g = _pendingGames[parseInt(cb.dataset.idx, 10)];
-    if (!g) return;
+  const checked     = [...document.querySelectorAll('#gamesModalBody .game-check:checked')];
+  const newestFirst = document.getElementById('gamesNewestFirst').checked;
+  const selected    = checked.map(cb => _pendingGames[parseInt(cb.dataset.idx, 10)]).filter(Boolean);
+  selected.sort((a, b) => newestFirst ? b.date - a.date : a.date - b.date);
+  selected.forEach(g => {
     const title = `vs. ${g.opponent} (${g.result})`;
     const cell  = newBoardCell(g.pgn || '', title, g.myColor);
     state.cells.push(cell);

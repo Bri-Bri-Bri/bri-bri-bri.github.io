@@ -163,8 +163,8 @@
     // NE v5.1.2 — pinned commit for stability
     var COMMIT  = '789c9904087846cc3361302857aa2e76b0ae71ff';
     var BASE    = 'https://raw.githubusercontent.com/nvkelso/natural-earth-vector/' + COMMIT + '/geojson/';
-    var URL_C0  = BASE + 'ne_110m_admin_0_countries.geojson';   // ~300 KB — world countries
-    var URL_A1  = BASE + 'ne_50m_admin_1_states_provinces.geojson'; // ~6 MB — all admin-1
+    var URL_C0  = BASE + 'ne_110m_admin_0_countries.geojson';        // ~300 KB — world countries
+    var URL_A1  = BASE + 'ne_10m_admin_1_states_provinces.geojson';  // ~38 MB raw / ~9 MB compressed — all admin-1
 
     // ── Theme-aware colors ─────────────────────────────────────────────────
     function isDark() {
@@ -357,7 +357,7 @@
         buildAdmin1(admin1Cache);
       } else if (!admin1Pending) {
         admin1Pending = true;
-        showPill('Loading subdivisions…');
+        showPill('Loading region data… (first visit may take a moment)');
         fetch(URL_A1)
           .then(function (r) {
             if (!r.ok) throw new Error('HTTP ' + r.status);

@@ -78,6 +78,10 @@
           <input type="text" id="settingsChesscom" placeholder="e.g. hikaru" autocomplete="off" spellcheck="false">
         </div>
         <div class="settings-field">
+          <label for="settingsMaxGames">Max games to fetch per platform</label>
+          <input type="number" id="settingsMaxGames" min="1" max="200" value="30">
+        </div>
+        <div class="settings-field">
           <label for="settingsBoardTheme">Board theme</label>
           <select id="settingsBoardTheme">
             <option value="auto">Auto (follows site theme)</option>
@@ -105,6 +109,10 @@
         <!-- populated by JS -->
       </div>
       <div class="modal-footer">
+        <label class="modal-footer-option">
+          <input type="checkbox" id="gamesNewestFirst" checked>
+          Newest first
+        </label>
         <button class="btn btn-primary" id="gamesAddBtn" disabled>Add to diary</button>
       </div>
     </div>
