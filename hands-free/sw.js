@@ -9,7 +9,7 @@
 //
 // Bump CACHE_VERSION on every deploy to purge stale assets.
 
-const CACHE_VERSION = 'v20260707023315';
+const CACHE_VERSION = 'v20260707024209';
 
 const APP_SHELL = [
   './',

@@ -190,7 +190,7 @@
     // ── Map ────────────────────────────────────────────────────────────────
     var map = L.map('map', {
       center: [20, 0], zoom: 2, minZoom: 2, maxZoom: 12,
-      renderer: L.canvas(), zoomControl: true,
+      renderer: L.canvas(), zoomControl: true, scrollWheelZoom: true,
     });
     function applyOcean() {
       var el = document.querySelector('.leaflet-container');
@@ -259,21 +259,20 @@
 
     // ── Country interaction ────────────────────────────────────────────────
     function onCountryOver(e) {
+      if (mode !== 'world') return;
       var layer = e.target;
-      var base  = styleCountry(layer.feature);
-      layer.setStyle(hoverStyle(base));
+      layer.setStyle(hoverStyle(styleCountry(layer.feature)));
       var p = layer.feature.properties;
-      if (mode === 'world') {
-        setHover(p.NAME || p.ADMIN, p.CONTINENT);
-      }
+      setHover(p.NAME || p.ADMIN, p.CONTINENT);
     }
     function onCountryOut(e) {
+      if (mode !== 'world') return;
       countriesLayer.resetStyle(e.target);
       clearHover();
     }
     function onCountryClick(e) {
       var p = e.target.feature.properties;
-      drillDown(p.ADM0_A3 || '', p.ISO_A2 || '', e.target);
+      drillDown(p.ADM0_A3 || '', e.target);
     }
 
     function onEachCountry(feature, layer) {
@@ -336,7 +335,7 @@
     }
 
     // ── Drill-down ─────────────────────────────────────────────────────────
-    function drillDown(adm0A3, isoA2, countryLayerRef) {
+    function drillDown(adm0A3, countryLayerRef) {
       // If already showing this country, do nothing
       if (mode === 'country' && adm0A3 === selectedAdm0) return;
 
@@ -344,9 +343,9 @@
       selectedAdm0  = adm0A3;
       selectedLayer = countryLayerRef;
 
-      // Zoom to country bounds
+      // Zoom to fill the viewport with this country
       var b = countryLayerRef.getBounds();
-      if ((b.getEast() - b.getWest()) < 180) map.fitBounds(b, { padding: [40, 40] });
+      if ((b.getEast() - b.getWest()) < 180) map.fitBounds(b, { padding: [10, 10], animate: true });
 
       // Refresh country layer styles (selected highlighted, rest dimmed)
       countriesLayer.eachLayer(function (l) { countriesLayer.resetStyle(l); });

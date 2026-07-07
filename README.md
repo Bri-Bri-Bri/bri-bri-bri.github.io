@@ -30,3 +30,27 @@ Voice input runs entirely in the browser using [Whisper](https://github.com/open
 This is a deliberate choice over the browser's built-in Web Speech API, which routes audio through Google's servers in most implementations.
 
 For games with a small, well-defined answer space, the decoder is further constrained using **logit masking**: at each generation step, any token outside the allowed vocabulary is set to negative infinity, so the model can only produce valid answers. For example, the Doomsday game restricts output to the seven day names, and the Binary game restricts to digit characters and their spoken equivalents. This both improves accuracy and prevents the kinds of hallucinations (plausible but wrong phrases) that unconstrained models occasionally produce.
+
+---
+
+### World Map
+
+An interactive world map for exploring and learning country subdivisions (states, provinces, territories, etc.). The workflow is:
+
+1. The globe loads showing all countries.
+2. Click any country to zoom in and see its admin-level-1 subdivisions drawn as polygons.
+3. Subdivision labels are hidden by default — hover to reveal a region's name, so you can quiz yourself without spoilers.
+4. A "Show labels" toggle reveals all labels at once when you want them visible.
+
+#### Data sources
+
+Geography data comes from [Natural Earth](https://www.naturalearthdata.com/), a public domain dataset maintained by cartographers. Two files are fetched at runtime from the [natural-earth-vector](https://github.com/nvkelso/natural-earth-vector) GitHub repository:
+
+- **`ne_110m_admin_0_countries.geojson`** (~300 KB) — world country polygons at 1:110m scale, loaded on page open.
+- **`ne_50m_admin_1_states_provinces.geojson`** (~6 MB) — all admin-1 subdivisions at 1:50m scale, fetched lazily on the first country click and cached in memory for the rest of the session.
+
+No data files are stored in this repository.
+
+#### Map rendering
+
+Maps are rendered with [Leaflet](https://leafletjs.com/) using its Canvas renderer. Country-to-subdivision matching uses Natural Earth's `adm0_a3` column.
