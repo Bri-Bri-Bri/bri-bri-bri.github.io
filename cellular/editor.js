@@ -161,7 +161,6 @@ function buildBoardCell(cell) {
       <button class="btn-icon undo-btn" title="Undo last move">\u21a9 Undo</button>
       <button class="btn-icon pgn-editor-btn" title="Edit / paste PGN">\u270e PGN</button>
       <button class="btn-icon flip-board" title="Flip board">\u21c5 Flip</button>
-      <button class="btn-icon export-board" title="Export as PGN">\u2b07\ufe0e PGN</button>
       <button class="btn-icon save-puzzle-btn" title="Save position as puzzle">\u{1F9E9}</button>
       <button class="btn-icon move-up" title="Move up">\u2191</button>
       <button class="btn-icon move-down" title="Move down">\u2193</button>
@@ -229,7 +228,7 @@ function buildBoardCell(cell) {
     if (wasEditing) setEditMode(cell.id, true);
   });
 
-  div.querySelector('.export-board').addEventListener('click', () => exportBoard(cell.id));
+  //div.querySelector('.export-board').addEventListener('click', () => exportBoard(cell.id));
   div.querySelector('.pgn-editor-btn').addEventListener('click', () => openPgnEditor(cell.id));
   div.querySelector('.save-puzzle-btn').addEventListener('click', () => openSavePuzzleDialog(cell.id));
 

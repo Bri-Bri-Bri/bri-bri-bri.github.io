@@ -661,6 +661,93 @@ body.sidebar-open #notebook-area { margin-left: var(--sidebar-w); }
   line-height: 1.5;
 }
 
+/* ── Save puzzle: mode tabs ─────────────────────────────────── */
+.puzzle-save-tabs {
+  display: flex;
+  gap: 0.25rem;
+  margin-bottom: 0.75rem;
+  background: var(--bg-hover);
+  border-radius: 6px;
+  padding: 0.2rem;
+}
+.puzzle-save-tab {
+  flex: 1;
+  background: none;
+  border: none;
+  border-radius: 5px;
+  padding: 0.3rem 0.5rem;
+  font-size: 0.8rem;
+  font-weight: 500;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s;
+}
+.puzzle-save-tab:hover:not(:disabled) { color: var(--text); }
+.puzzle-save-tab.active { background: var(--bg-raised); color: var(--text); box-shadow: 0 1px 3px rgba(0,0,0,0.08); }
+.puzzle-save-tab:disabled { opacity: 0.38; cursor: not-allowed; }
+
+/* ── Save puzzle: move list preview ─────────────────────────── */
+.puzzle-save-moves-preview {
+  font-size: 0.8rem;
+  font-family: var(--font-mono);
+  color: var(--text-muted);
+  line-height: 1.65;
+  min-height: 1.5em;
+  word-break: break-word;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.15rem 0.1rem;
+}
+.puzzle-move-num {
+  font-size: 0.72rem;
+  color: var(--text-faint);
+  margin-right: 0.1rem;
+  user-select: none;
+}
+.puzzle-move-chip {
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 0.1em 0.35em;
+  font-size: 0.78rem;
+  font-family: var(--font-mono);
+  cursor: pointer;
+  transition: background 0.1s, border-color 0.1s, color 0.1s;
+  line-height: 1.4;
+}
+.puzzle-move-chip.is-active {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  border-color: color-mix(in srgb, var(--accent) 40%, transparent);
+  color: var(--text);
+}
+.puzzle-move-chip.is-dim {
+  color: var(--text-faint);
+  border-color: transparent;
+}
+.puzzle-move-chip:hover { border-color: var(--accent); color: var(--text); }
+.puzzle-save-moves-hint {
+  width: 100%;
+  font-size: 0.72rem;
+  color: var(--text-faint);
+  font-family: var(--font);
+  margin-top: 0.25rem;
+}
+
+/* ── Save puzzle: custom board ──────────────────────────────── */
+.puzzle-save-board-wrap {
+  width: 100%;
+  max-width: 260px;
+  margin: 0 auto 0.6rem;
+}
+.puzzle-save-board-wrap .cg-board { width: 100%; aspect-ratio: 1; }
+.puzzle-save-custom-footer {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+}
+.puzzle-save-custom-footer .puzzle-save-moves-preview { flex: 1; display: block; }
+
 .game-speed {
   font-size: 0.75rem;
   color: var(--text-faint);

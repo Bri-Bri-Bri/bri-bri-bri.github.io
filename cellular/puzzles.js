@@ -20,16 +20,19 @@ export function savePuzzles(puzzles) {
 
 // ── Save puzzle dialog ────────────────────────────────────────────────────────
 
+let _saveCustomGround = null;
+let _saveCustomChess  = null;
+let _saveCustomMoves  = [];
+
 export function openSavePuzzleDialog(cellId) {
   const inst = getBoardInstance(cellId);
   const cell = getCell(cellId);
   if (!inst || !cell) return;
 
-  const solution = inst.chess.history().slice(inst.plyIdx);
-  if (solution.length === 0) {
-    alert('No moves after this position. Navigate to an earlier ply first.');
-    return;
-  }
+  const gameMoves = inst.chess.history().slice(inst.plyIdx);
+  const startFen  = inst.fens[inst.plyIdx];
+  const startOrientation = cell.orientation || (new Chess(startFen).turn() === 'w' ? 'white' : 'black');
+  const hasGameMoves = gameMoves.length > 0;
 
   const chess = new Chess();
   try { chess.loadPgn(cell.pgn || ''); } catch {}
@@ -38,30 +41,193 @@ export function openSavePuzzleDialog(cellId) {
     ((h.White && h.Black && h.White !== '?' && h.Black !== '?') ? `${h.White} vs ${h.Black}` : '') ||
     'Puzzle';
 
-  const modal = document.getElementById('savePuzzleModal');
-  const input = document.getElementById('savePuzzleName');
-  input.value            = defaultName;
-  modal._pendingFen      = inst.fens[inst.plyIdx];
-  modal._pendingSolution = solution;
-  modal._fromStudy       = state.title || '';
+  const modal    = document.getElementById('savePuzzleModal');
+  const input    = document.getElementById('savePuzzleName');
+  const tabGame  = document.getElementById('savePuzzleTabGame');
+  const tabCustom = document.getElementById('savePuzzleTabCustom');
+
+  input.value       = defaultName;
+  modal._pendingFen = startFen;
+  modal._gameMoves  = gameMoves;
+  modal._fromStudy  = state.title || '';
+  modal._startFen   = startFen;
+  modal._startOrientation = startOrientation;
+
+  // Populate game moves preview with clickable chips
+  _renderGameMovesPanel(modal, gameMoves);
+
+  tabGame.disabled = !hasGameMoves;
+
+  function activateTab(mode) {
+    modal._activeMode = mode;
+    tabGame.classList.toggle('active', mode === 'game');
+    tabCustom.classList.toggle('active', mode === 'custom');
+    document.getElementById('savePuzzlePanelGame').hidden   = mode !== 'game';
+    document.getElementById('savePuzzlePanelCustom').hidden = mode !== 'custom';
+    if (mode === 'custom') _mountSaveBoard(startFen, startOrientation);
+  }
+
+  tabGame.onclick   = () => { if (hasGameMoves) activateTab('game'); };
+  tabCustom.onclick = () => activateTab('custom');
+
+  activateTab(hasGameMoves ? 'game' : 'custom');
   modal.classList.add('is-open');
   setTimeout(() => { input.select(); input.focus(); }, 50);
 }
 
+function _mountSaveBoard(fen, orientation) {
+  const wrap = document.getElementById('savePuzzleCustomBoard');
+  if (!wrap) return;
+
+  if (_saveCustomGround) { _saveCustomGround.destroy(); _saveCustomGround = null; }
+  _saveCustomChess = new Chess(fen);
+  _saveCustomMoves = [];
+
+  wrap.innerHTML = '';
+  const cgWrap = document.createElement('div');
+  cgWrap.className = 'cg-wrap cg-board';
+  wrap.appendChild(cgWrap);
+
+  const toMove = _saveCustomChess.turn() === 'w' ? 'white' : 'black';
+  _saveCustomGround = Chessground(cgWrap, {
+    fen,
+    orientation: orientation || toMove,
+    turnColor:   toMove,
+    movable: {
+      free:  false,
+      color: 'both',
+      dests: getLegalMoveDests(_saveCustomChess),
+      events: { after: _onSaveBoardMove },
+    },
+    draggable:  { enabled: true },
+    selectable: { enabled: true },
+  });
+  _updateSaveCustomDisplay();
+}
+
+function _onSaveBoardMove(orig, dest) {
+  if (!_saveCustomChess) return;
+  const move = _saveCustomChess.move({ from: orig, to: dest, promotion: 'q' });
+  if (!move) return;
+  _saveCustomMoves.push(move.san);
+  const over = _saveCustomChess.isGameOver();
+  _saveCustomGround.set({
+    fen:       _saveCustomChess.fen(),
+    lastMove:  [orig, dest],
+    turnColor: _saveCustomChess.turn() === 'w' ? 'white' : 'black',
+    movable:   over ? { color: 'none', dests: new Map() } : { color: 'both', dests: getLegalMoveDests(_saveCustomChess) },
+    draggable:  { enabled: !over },
+    selectable: { enabled: !over },
+  });
+  _updateSaveCustomDisplay();
+}
+
+function _undoSaveMove() {
+  if (!_saveCustomChess || _saveCustomMoves.length === 0) return;
+  _saveCustomChess.undo();
+  _saveCustomMoves.pop();
+  const toMove = _saveCustomChess.turn() === 'w' ? 'white' : 'black';
+  _saveCustomGround.set({
+    fen:       _saveCustomChess.fen(),
+    lastMove:  [],
+    turnColor: toMove,
+    movable:   { color: 'both', dests: getLegalMoveDests(_saveCustomChess) },
+    draggable:  { enabled: true },
+    selectable: { enabled: true },
+  });
+  _updateSaveCustomDisplay();
+}
+
+function _updateSaveCustomDisplay() {
+  const el = document.getElementById('savePuzzleCustomMovesList');
+  if (!el) return;
+  el.textContent = _saveCustomMoves.length
+    ? _formatMoveList(_saveCustomMoves)
+    : 'Play moves on the board to record the solution.';
+}
+
+function _renderGameMovesPanel(modal, moves) {
+  const container = document.getElementById('savePuzzleGameMovesList');
+  if (moves.length === 0) {
+    container.textContent = 'No continuation in the game from this position.';
+    modal._gameMovesCount = 0;
+    return;
+  }
+
+  function render(count) {
+    modal._gameMovesCount = count;
+    container.innerHTML = '';
+    moves.forEach((san, i) => {
+      const ply = i + 1;
+      if (i % 2 === 0) {
+        const num = document.createElement('span');
+        num.className = 'puzzle-move-num';
+        num.textContent = `${Math.floor(i / 2) + 1}.`;
+        container.appendChild(num);
+      }
+      const chip = document.createElement('button');
+      chip.className = 'puzzle-move-chip' + (ply <= count ? ' is-active' : ' is-dim');
+      chip.textContent = san;
+      chip.addEventListener('click', () => render(ply));
+      container.appendChild(chip);
+    });
+    const hint = document.createElement('p');
+    hint.className = 'puzzle-save-moves-hint';
+    hint.textContent = `${count} move${count !== 1 ? 's' : ''} — click to adjust`;
+    container.appendChild(hint);
+  }
+
+  render(moves.length);
+}
+
+function _formatMoveList(moves) {
+  const parts = [];
+  moves.forEach((san, i) => {
+    if (i % 2 === 0) parts.push(`${Math.floor(i / 2) + 1}. ${san}`);
+    else parts[parts.length - 1] += ` ${san}`;
+  });
+  return parts.join('  ');
+}
+
+function _closeSavePuzzleDialog() {
+  document.getElementById('savePuzzleModal').classList.remove('is-open');
+  if (_saveCustomGround) { _saveCustomGround.destroy(); _saveCustomGround = null; }
+  _saveCustomChess = null;
+  _saveCustomMoves = [];
+}
+
 function _confirmSavePuzzle() {
-  const modal  = document.getElementById('savePuzzleModal');
-  const name   = document.getElementById('savePuzzleName').value.trim() || 'Puzzle';
+  const modal = document.getElementById('savePuzzleModal');
+  const name  = document.getElementById('savePuzzleName').value.trim() || 'Puzzle';
+
+  let solution;
+  if (modal._activeMode === 'custom') {
+    if (_saveCustomMoves.length === 0) {
+      alert('Play at least one move on the board to define the solution.');
+      return;
+    }
+    solution = [..._saveCustomMoves];
+  } else {
+    const all = modal._gameMoves || [];
+    const count = modal._gameMovesCount || all.length;
+    solution = all.slice(0, count);
+    if (solution.length === 0) {
+      alert('No continuation moves. Use Custom moves to record a solution manually.');
+      return;
+    }
+  }
+
   const puzzle = {
     id: uid(), name,
     fen:       modal._pendingFen,
-    solution:  modal._pendingSolution || [],
+    solution,
     createdAt: new Date().toISOString(),
     fromStudy: modal._fromStudy || '',
   };
   const puzzles = loadPuzzles();
   puzzles.unshift(puzzle);
   savePuzzles(puzzles);
-  modal.classList.remove('is-open');
+  _closeSavePuzzleDialog();
 }
 
 // ── Puzzles list modal ────────────────────────────────────────────────────────
@@ -249,11 +415,12 @@ document.getElementById('puzzlesBtn').addEventListener('click', openPuzzlesModal
 document.getElementById('puzzlesClose').addEventListener('click', () => document.getElementById('puzzlesModal').classList.remove('is-open'));
 document.getElementById('puzzlesModal').addEventListener('click', e => { if (e.target === e.currentTarget) e.currentTarget.classList.remove('is-open'); });
 
-document.getElementById('savePuzzleClose').addEventListener('click', () => document.getElementById('savePuzzleModal').classList.remove('is-open'));
-document.getElementById('savePuzzleCancel').addEventListener('click', () => document.getElementById('savePuzzleModal').classList.remove('is-open'));
+document.getElementById('savePuzzleClose').addEventListener('click', _closeSavePuzzleDialog);
+document.getElementById('savePuzzleCancel').addEventListener('click', _closeSavePuzzleDialog);
 document.getElementById('savePuzzleConfirm').addEventListener('click', _confirmSavePuzzle);
 document.getElementById('savePuzzleName').addEventListener('keydown', e => { if (e.key === 'Enter') _confirmSavePuzzle(); });
-document.getElementById('savePuzzleModal').addEventListener('click', e => { if (e.target === e.currentTarget) e.currentTarget.classList.remove('is-open'); });
+document.getElementById('savePuzzleModal').addEventListener('click', e => { if (e.target === e.currentTarget) _closeSavePuzzleDialog(); });
+document.getElementById('savePuzzleUndoMove').addEventListener('click', _undoSaveMove);
 
 document.getElementById('puzzlePracticeClose').addEventListener('click', () => document.getElementById('puzzlePracticeModal').classList.remove('is-open'));
 document.getElementById('puzzlePracticeModal').addEventListener('click', e => { if (e.target === e.currentTarget) e.currentTarget.classList.remove('is-open'); });

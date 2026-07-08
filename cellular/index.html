@@ -146,7 +146,24 @@
           <label for="savePuzzleName">Puzzle name</label>
           <input type="text" id="savePuzzleName" placeholder="e.g. Brilliant queen sacrifice" autocomplete="off">
         </div>
-        <p class="puzzle-save-hint">Saves from the current position. The remaining moves in the game become the solution.</p>
+        <div class="puzzle-save-tabs">
+          <button class="puzzle-save-tab active" id="savePuzzleTabGame">From game</button>
+          <button class="puzzle-save-tab" id="savePuzzleTabCustom">Custom moves</button>
+        </div>
+        <!-- From game panel -->
+        <div id="savePuzzlePanelGame">
+          <div id="savePuzzleGameMovesList" class="puzzle-save-moves-preview"></div>
+        </div>
+        <!-- Custom moves panel -->
+        <div id="savePuzzlePanelCustom" hidden>
+          <div class="puzzle-save-board-wrap">
+            <div id="savePuzzleCustomBoard"></div>
+          </div>
+          <div class="puzzle-save-custom-footer">
+            <div id="savePuzzleCustomMovesList" class="puzzle-save-moves-preview"></div>
+            <button class="btn-icon" id="savePuzzleUndoMove" title="Undo last move">↩</button>
+          </div>
+        </div>
       </div>
       <div class="modal-footer">
         <button class="btn btn-secondary" id="savePuzzleCancel">Cancel</button>
