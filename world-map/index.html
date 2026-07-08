@@ -16,20 +16,21 @@
       position: fixed;
       top: var(--nav-h, 44px);
       left: 0; right: 0;
-      bottom: 40px;
+      bottom: var(--bar-h, 40px);
     }
 
     /* ── Info bar ─────────────────────────────────────────────────────────── */
     #info-bar {
       position: fixed;
       bottom: 0; left: 0; right: 0;
-      height: 40px;
+      min-height: 40px;
       background: var(--surface);
       border-top: 1px solid var(--border);
       display: flex;
+      flex-wrap: wrap;
       align-items: center;
-      padding: 0 0.85rem;
-      gap: 0.65rem;
+      padding: 5px 0.85rem;
+      gap: 0.5rem 0.65rem;
       font-size: 0.82rem;
       color: var(--muted);
       z-index: 500;
@@ -37,10 +38,7 @@
 
     #hover-info {
       flex: 1;
-      min-width: 0;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
+      min-width: 180px;
     }
 
     #hover-name    { color: var(--text); font-weight: 600; }
@@ -60,6 +58,11 @@
     }
     .bar-btn:hover  { background: var(--border); }
     .bar-btn.active { background: var(--primary); color: #fff; border-color: var(--primary); }
+
+    @media (max-width: 640px) {
+      .bar-btn { padding: 0.35rem 0.75rem; font-size: 0.82rem; }
+      #hover-name { font-size: 0.88rem; }
+    }
 
     /* ── Full-page loading overlay ────────────────────────────────────────── */
     #loading {
@@ -188,9 +191,11 @@
     var C = mkColors();
 
     // ── Map ────────────────────────────────────────────────────────────────
+    var WORLD_ZOOM = window.innerWidth < 640 ? 1 : 2;
     var map = L.map('map', {
-      center: [20, 0], zoom: 2, minZoom: 2, maxZoom: 12,
+      center: [20, 0], zoom: WORLD_ZOOM, minZoom: 1, maxZoom: 12,
       renderer: L.canvas(), zoomControl: true, scrollWheelZoom: true,
+      maxBounds: [[-85, -180], [85, 180]], maxBoundsViscosity: 0.8,
     });
     function applyOcean() {
       var el = document.querySelector('.leaflet-container');
@@ -203,6 +208,7 @@
     var countriesLayer = null;
     var admin1Cache  = null;      // raw GeoJSON once fetched
     var admin1Layer  = null;      // current country's admin-1 layer
+    var dotsLayer    = null;      // circle markers for tiny regions
     var selectedAdm0 = null;      // ADM0_A3 of selected country
     var selectedLayer= null;      // the clicked country layer ref
     var labelsOn     = false;
@@ -332,6 +338,9 @@
         onEachFeature: onEachAdmin1,
       }).addTo(map);
       hidePill();
+      // Show dot markers for any regions too small to comfortably click.
+      // Delay until the fitBounds animation finishes.
+      setTimeout(buildDots, 500);
     }
 
     // ── Drill-down ─────────────────────────────────────────────────────────
@@ -387,6 +396,7 @@
       selectedAdm0  = null;
       selectedLayer = null;
       if (admin1Layer) { map.removeLayer(admin1Layer); admin1Layer = null; }
+      if (dotsLayer)   { map.removeLayer(dotsLayer);   dotsLayer   = null; }
       countriesLayer.eachLayer(function (l) { countriesLayer.resetStyle(l); });
       backBtn.style.display = 'none';
       // Restore hover tooltips on countries
@@ -396,7 +406,7 @@
           bindTip(l, name, true);
         });
       }
-      map.setView([20, 0], 2);
+      map.setView([20, 0], WORLD_ZOOM);
       clearHover();
     }
 
@@ -429,7 +439,7 @@
 
     document.getElementById('world-btn').addEventListener('click', function () {
       if (mode === 'country') goWorld();
-      else map.setView([20, 0], 2);
+      else map.setView([20, 0], WORLD_ZOOM);
     });
 
     document.getElementById('label-toggle').addEventListener('click', function () {
@@ -448,7 +458,7 @@
 
     document.addEventListener('keydown', function (e) {
       if (e.key === 'l' || e.key === 'L') document.getElementById('label-toggle').click();
-      if (e.key === 'Escape') { if (mode === 'country') goWorld(); else map.setView([20, 0], 2); }
+      if (e.key === 'Escape') { if (mode === 'country') goWorld(); else map.setView([20, 0], WORLD_ZOOM); }
     });
 
     // ── Theme reactivity ───────────────────────────────────────────────────
@@ -457,11 +467,61 @@
       applyOcean();
       if (countriesLayer) countriesLayer.setStyle(styleCountry);
       if (admin1Layer)    admin1Layer.setStyle(styleAdmin1);
+      buildDots(); // re-tint dots to match new palette
     }
     new MutationObserver(recolor).observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
     window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', function () {
       if (!document.documentElement.getAttribute('data-theme')) recolor();
     });
+
+    // ── Dot markers for tiny regions ───────────────────────────────────────
+    // Any admin-1 polygon whose screen bounding box is < 18 px in both dimensions
+    // gets a circle marker at its Natural Earth centroid so it's still hoverable.
+    function buildDots() {
+      if (dotsLayer) { map.removeLayer(dotsLayer); dotsLayer = null; }
+      if (mode !== 'country' || !admin1Layer) return;
+      var dots = [];
+      admin1Layer.eachLayer(function (layer) {
+        var b = layer.getBounds();
+        if (!b.isValid()) return;
+        var ne = map.latLngToContainerPoint(b.getNorthEast());
+        var sw = map.latLngToContainerPoint(b.getSouthWest());
+        if (Math.max(Math.abs(ne.x - sw.x), Math.abs(ne.y - sw.y)) > 18) return;
+        var p   = layer.feature.properties;
+        var lat = parseFloat(p.latitude), lng = parseFloat(p.longitude);
+        if (isNaN(lat) || isNaN(lng)) return;
+        var name = (p.name || p.NAME || '').trim();
+        var dot  = L.circleMarker([lat, lng], {
+          radius: 5, fillColor: C.admin1Fill, fillOpacity: 0.95,
+          color: C.admin1Bord, weight: 1.5,
+        });
+        if (name) dot.bindTooltip(name, TIP_HOVER);
+        dot.on('mouseover', function () {
+          dot.setStyle({ fillColor: C.hoverFill });
+          setHover(p.name || p.NAME, p.type_en || p.type || '');
+        });
+        dot.on('mouseout', function () {
+          dot.setStyle({ fillColor: C.admin1Fill });
+          clearHover();
+        });
+        dots.push(dot);
+      });
+      if (dots.length) dotsLayer = L.layerGroup(dots).addTo(map);
+    }
+    // Rebuild dots whenever the user zooms (regions enter/exit the threshold)
+    map.on('zoomend', buildDots);
+
+    // ── Sync map bottom with info bar height ───────────────────────────────
+    // The info bar can grow when region names wrap on narrow screens.
+    var infoBar = document.getElementById('info-bar');
+    function syncBarHeight() {
+      document.documentElement.style.setProperty(
+        '--bar-h', Math.ceil(infoBar.getBoundingClientRect().height) + 'px'
+      );
+      map.invalidateSize();
+    }
+    new ResizeObserver(syncBarHeight).observe(infoBar);
+    syncBarHeight();
 
   }());
   </script>
