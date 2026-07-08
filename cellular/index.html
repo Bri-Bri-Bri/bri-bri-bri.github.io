@@ -7,6 +7,7 @@
   <!-- shared navbar: prevents theme flash + injects site nav -->
   <script src="../shared/navbar.js"></script>
   <link rel="stylesheet" href="https://unpkg.com/@lichess-org/pgn-viewer@2.6.0/dist/lichess-pgn-viewer.css">
+  <link rel="stylesheet" href="board.css">
   <link rel="stylesheet" href="editor.css">
 </head>
 <body>
@@ -14,15 +15,13 @@
   <header id="menubar">
     <button id="sidebarToggle" class="btn-icon" title="Toggle diary sidebar">☰</button>
     <span class="logo">♟ Cellular</span>
-    <div class="menu-section">
-      <button id="newEntryBtn" class="btn btn-secondary">+ New Entry</button>
-      <button id="exportBtn" class="btn btn-primary">Export Entry</button>
-    </div>
+    <button id="exportDiaryBtn" class="btn btn-primary" title="Export diary as standalone HTML">⬇ Export</button>
     <div class="spacer"></div>
     <div class="menu-section">
       <button id="addTextBtn" class="btn btn-ghost">+ Text</button>
       <button id="addBoardBtn" class="btn btn-ghost">+ Board</button>
       <button id="gamesBtn" class="btn btn-ghost" title="Import games from Lichess / Chess.com">📥 Games</button>
+      <button id="puzzlesBtn" class="btn btn-ghost" title="View and practice saved puzzles">🧩 Puzzles</button>
     </div>
     <button id="settingsBtn" class="btn-icon" title="Settings">⚙</button>
   </header>
@@ -131,6 +130,62 @@
       <div class="modal-footer">
         <button class="btn btn-secondary" id="pgnEditorClose2">Cancel</button>
         <button class="btn btn-primary" id="pgnEditorApply">Apply</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Save puzzle modal -->
+  <div id="savePuzzleModal" class="modal-overlay" role="dialog" aria-modal="true" aria-label="Save puzzle">
+    <div class="modal-box">
+      <div class="modal-header">
+        <h3>Save as Puzzle</h3>
+        <button class="btn-icon" id="savePuzzleClose" title="Close">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="settings-field">
+          <label for="savePuzzleName">Puzzle name</label>
+          <input type="text" id="savePuzzleName" placeholder="e.g. Brilliant queen sacrifice" autocomplete="off">
+        </div>
+        <p class="puzzle-save-hint">Saves from the current position. The remaining moves in the game become the solution.</p>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" id="savePuzzleCancel">Cancel</button>
+        <button class="btn btn-primary" id="savePuzzleConfirm">Save</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Puzzles list modal -->
+  <div id="puzzlesModal" class="modal-overlay" role="dialog" aria-modal="true" aria-label="Puzzles">
+    <div class="modal-box modal-box--wide">
+      <div class="modal-header">
+        <h3>🧩 Puzzles</h3>
+        <button class="btn-icon" id="puzzlesClose" title="Close">✕</button>
+      </div>
+      <div id="puzzlesModalBody" class="modal-body puzzle-list-body">
+        <!-- populated by JS -->
+      </div>
+    </div>
+  </div>
+
+  <!-- Puzzle practice modal -->
+  <div id="puzzlePracticeModal" class="modal-overlay" role="dialog" aria-modal="true" aria-label="Puzzle practice">
+    <div class="modal-box modal-box--puzzle">
+      <div class="modal-header">
+        <h3 id="puzzlePracticeName">Puzzle</h3>
+        <button class="btn-icon" id="puzzlePracticeClose" title="Close">✕</button>
+      </div>
+      <div class="modal-body puzzle-practice-body">
+        <div class="puzzle-board-outer">
+          <div id="puzzlePracticeBoard"></div>
+        </div>
+        <div class="puzzle-practice-controls">
+          <div id="puzzleFeedback" class="puzzle-feedback"></div>
+          <div class="puzzle-btn-row">
+            <button class="btn btn-ghost" id="puzzleShowSolution">Show solution</button>
+            <button class="btn btn-ghost" id="puzzleReset">↺ Reset</button>
+          </div>
+        </div>
       </div>
     </div>
   </div>

@@ -1,23 +1,14 @@
 import { marked } from 'https://esm.sh/marked@14';
-import { Chess } from 'https://esm.sh/chess.js@1?bundle';
-import { Chessground } from 'https://esm.sh/@lichess-org/chessground?bundle';
-
-// ── State ─────────────────────────────────────────────────────────────────────
-
-const state = {
-  studyId:      null,  // currently loaded study
-  title:        '',
-  cells:        [],
-  studiesIndex: [],    // [{ id, title, date, updatedAt }] — metadata only
-};
-
-// cellId → { chess, ground, fens, plyIdx, isEditing }
-const boardInstances = new Map();
-let autoSaveTimer = null;
+import { state } from './state.js';
+import {
+  mountBoard, navTo, setEditMode, undoLastMove, rebuildPgnWithAnnotations,
+  getBoardInstance, destroyBoardInstance, clearAllBoardInstances,
+} from './board.js';
+import { openSavePuzzleDialog } from './puzzles.js';
 
 // ── IDs ───────────────────────────────────────────────────────────────────────
 
-function uid() {
+export function uid() {
   return Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
 }
 
@@ -33,7 +24,7 @@ function newBoardCell(pgn = '', title = '', orientation = 'white') {
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-function escapeHtml(str) {
+export function escapeHtml(str) {
   if (!str) return '';
   return str
     .replace(/&/g, '&amp;')
@@ -42,22 +33,24 @@ function escapeHtml(str) {
     .replace(/"/g, '&quot;');
 }
 
-function escapeAttr(str) {
+export function escapeAttr(str) {
   if (!str) return '';
   return str.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 }
 
-function getCell(id) {
+export function getCell(id) {
   return state.cells.find(c => c.id === id);
 }
 
-function updateCellData(id, patch) {
+export function updateCellData(id, patch) {
   const cell = getCell(id);
   if (cell) Object.assign(cell, patch);
   scheduleAutoSave();
 }
 
 // ── Storage ───────────────────────────────────────────────────────────────────
+
+let autoSaveTimer = null;
 
 function loadIndex() {
   try { return JSON.parse(localStorage.getItem('cellular-index') || '[]'); }
@@ -88,386 +81,6 @@ function saveCurrentStudy() {
     saveIndex();
     renderSidebar();
   }
-}
-
-// ── Chessground helpers ───────────────────────────────────────────────────────
-
-function getLegalMoveDests(chess) {
-  const dests = new Map();
-  chess.moves({ verbose: true }).forEach(m => {
-    if (!dests.has(m.from)) dests.set(m.from, []);
-    dests.get(m.from).push(m.to);
-  });
-  return dests;
-}
-
-// ── Board: mount ──────────────────────────────────────────────────────────────
-
-function mountBoard(cellId) {
-  const cell = getCell(cellId);
-  if (!cell) return;
-  const cellEl = document.querySelector(`.cell[data-id="${CSS.escape(cellId)}"]`);
-  if (!cellEl) return;
-  const wrap = cellEl.querySelector('.board-viewer-wrap');
-  if (!wrap) return;
-
-  // Destroy existing instance
-  const existing = boardInstances.get(cellId);
-  if (existing?.ground?.destroy) existing.ground.destroy();
-  boardInstances.delete(cellId);
-
-  // Parse PGN; build FEN array: fens[0] = start, fens[i] = after move i
-  const chess = new Chess();
-  try { chess.loadPgn(cell.pgn || ''); } catch { chess.reset(); }
-
-  const walker = new Chess();
-  const fens = [walker.fen()];
-  chess.history({ verbose: true }).forEach(mv => { walker.move(mv.san); fens.push(walker.fen()); });
-
-  const plyIdx = fens.length - 1;
-
-  // Last-move highlight for initial display
-  let initLastMove = [];
-  if (plyIdx > 0) {
-    const h = chess.history({ verbose: true });
-    const m = h[plyIdx - 1];
-    if (m) initLastMove = [m.from, m.to];
-  }
-
-  wrap.innerHTML = '';
-  const cgWrap = document.createElement('div');
-  cgWrap.className = 'cg-wrap cg-board';
-  wrap.appendChild(cgWrap);
-
-  let inst; // forward ref — assigned just after Chessground()
-  const ground = Chessground(cgWrap, {
-    fen:         fens[plyIdx],
-    orientation: cell.orientation || 'white',
-    turnColor:   chess.turn() === 'w' ? 'white' : 'black',
-    lastMove:    initLastMove,
-    movable: {
-      free:  false,
-      color: 'none',
-      dests: new Map(),
-      events: {
-        after(from, to) {
-          if (!inst?.isEditing) return;
-          const move = inst.chess.move({ from, to, promotion: 'q' });
-          if (!move) return;
-          inst.fens.push(inst.chess.fen());
-          inst.plyIdx = inst.fens.length - 1;
-          updateCellData(cellId, { pgn: inst.chess.pgn() });
-          const hist = inst.chess.history({ verbose: true });
-          const last = hist[hist.length - 1];
-          const n    = Math.floor((hist.length - 1) / 2) + 1;
-          const lbl  = last.color === 'w' ? `${n}. ${last.san}` : `${n}\u2026 ${last.san}`;
-          appendAnnotationRow(cellId, lbl, inst.chess.fen());
-          ground.set({
-            fen:       inst.chess.fen(),
-            lastMove:  [from, to],
-            turnColor: inst.chess.turn() === 'w' ? 'white' : 'black',
-            movable:   { dests: getLegalMoveDests(inst.chess) },
-          });
-          cellEl.classList.add('has-moves');
-          _updateNavButtons(cellId);
-        }
-      }
-    },
-    drawable:  { enabled: true, visible: true },
-    draggable: { enabled: false },
-    selectable:{ enabled: false },
-  });
-
-  inst = { chess, ground, fens, plyIdx, isEditing: false };
-  boardInstances.set(cellId, inst);
-
-  _updateGameHeader(cellId);
-  cellEl.classList.toggle('has-moves', fens.length > 1);
-  refreshAnnotationPanel(cellId);
-  _updateNavButtons(cellId);
-}
-
-// ── Board: navigate to ply ────────────────────────────────────────────────────
-
-function navTo(cellId, plyIdx) {
-  const inst = boardInstances.get(cellId);
-  if (!inst) return;
-  const { chess, ground, fens, isEditing } = inst;
-
-  const clamped = Math.max(0, Math.min(plyIdx, fens.length - 1));
-  inst.plyIdx = clamped;
-
-  const isEnd = clamped === fens.length - 1;
-  const fen   = fens[clamped];
-  const tc    = new Chess(fen);
-
-  let lastMove = [];
-  if (clamped > 0) {
-    const mv = chess.history({ verbose: true })[clamped - 1];
-    if (mv) lastMove = [mv.from, mv.to];
-  }
-
-  ground.set({
-    fen,
-    turnColor:  tc.turn() === 'w' ? 'white' : 'black',
-    lastMove,
-    movable: (isEditing && isEnd)
-      ? { free: false, color: 'both', dests: getLegalMoveDests(chess) }
-      : { color: 'none', dests: new Map() },
-    draggable:  { enabled: isEditing && isEnd },
-    selectable: { enabled: isEditing && isEnd },
-  });
-
-  _highlightAnnotationRow(cellId, clamped);
-  _updateNavButtons(cellId);
-}
-
-// ── Board: toggle edit mode ───────────────────────────────────────────────────
-
-function setEditMode(cellId, editing) {
-  const inst   = boardInstances.get(cellId);
-  const cellEl = document.querySelector(`.cell[data-id="${CSS.escape(cellId)}"]`);
-  if (!inst || !cellEl) return;
-
-  inst.isEditing = editing;
-  cellEl.classList.toggle('edit-mode', editing);
-
-  const btn = cellEl.querySelector('.edit-moves-btn');
-  if (btn) { btn.textContent = editing ? '\u2713 Done' : '\u270f Edit'; btn.classList.toggle('active', editing); }
-  cellEl.querySelector('.undo-btn')?.classList.toggle('is-visible', editing);
-
-  // Toggle annotation note editability
-  const editable = editing ? 'plaintext-only' : 'false';
-  cellEl.querySelectorAll('.annotation-note').forEach(n => { n.contentEditable = editable; });
-
-  navTo(cellId, inst.plyIdx);
-}
-
-// ── Board: undo last move ─────────────────────────────────────────────────────
-
-function undoLastMove(cellId) {
-  const inst   = boardInstances.get(cellId);
-  const cellEl = document.querySelector(`.cell[data-id="${CSS.escape(cellId)}"]`);
-  if (!inst || !cellEl) return;
-  if (inst.chess.history().length === 0) return;
-
-  inst.chess.undo();
-  inst.fens.pop();
-  updateCellData(cellId, { pgn: inst.chess.pgn() });
-
-  const list = cellEl.querySelector('.annotation-list');
-  if (list?.lastElementChild && !list.lastElementChild.classList.contains('annotation-panel-empty')) {
-    list.lastElementChild.remove();
-  }
-  if (inst.fens.length <= 1) {
-    if (list) list.innerHTML = '<div class="annotation-panel-empty">No moves yet \u2014 use "\u270e PGN" to paste a game.</div>';
-    cellEl.classList.remove('has-moves');
-  }
-
-  navTo(cellId, inst.fens.length - 1);
-}
-
-// ── Board: game info header ───────────────────────────────────────────────────
-
-function _updateGameHeader(cellId) {
-  const cell   = getCell(cellId);
-  const cellEl = document.querySelector(`.cell[data-id="${CSS.escape(cellId)}"]`);
-  if (!cell || !cellEl) return;
-  const header = cellEl.querySelector('.board-game-header');
-  if (!header) return;
-
-  const chess = new Chess();
-  try { chess.loadPgn(cell.pgn || ''); } catch {}
-  const h = chess.header ? chess.header() : {};
-
-  if ((!h.White || h.White === '?') && (!h.Black || h.Black === '?')) { header.hidden = true; return; }
-  header.hidden = false;
-  header.querySelector('.gh-white').textContent   = h.White   || '?';
-  header.querySelector('.gh-black').textContent   = h.Black   || '?';
-  header.querySelector('.gh-result').textContent  = h.Result  || '';
-  header.querySelector('.gh-date').textContent    =
-    (h.Date || '').replace(/\.\?\?/g, '').replace(/^(\d{4})\.(\d{2})\.(\d{2})$/, '$2/$3/$1');
-  header.querySelector('.gh-opening').textContent = h.Opening || h.ECO || '';
-}
-
-// ── Board: nav button state ───────────────────────────────────────────────────
-
-function _updateNavButtons(cellId) {
-  const inst   = boardInstances.get(cellId);
-  const cellEl = document.querySelector(`.cell[data-id="${CSS.escape(cellId)}"]`);
-  if (!inst || !cellEl) return;
-  const { plyIdx, fens } = inst;
-  const max = fens.length - 1;
-  cellEl.querySelector('.nav-first')?.toggleAttribute('disabled', plyIdx === 0);
-  cellEl.querySelector('.nav-prev')?.toggleAttribute('disabled',  plyIdx === 0);
-  cellEl.querySelector('.nav-next')?.toggleAttribute('disabled',  plyIdx === max);
-  cellEl.querySelector('.nav-last')?.toggleAttribute('disabled',  plyIdx === max);
-  const counter = cellEl.querySelector('.nav-ply-counter');
-  if (counter) counter.textContent = max > 0 ? `${plyIdx} / ${max}` : '';
-  const link = cellEl.querySelector('.nav-game-link');
-  if (link) {
-    const url = _getGameLink(getCell(cellId)?.pgn || '');
-    if (url) { link.href = url; link.removeAttribute('hidden'); }
-    else      { link.removeAttribute('href'); link.setAttribute('hidden', ''); }
-  }
-}
-
-// ── Board: highlight annotation row ──────────────────────────────────────────
-
-function _highlightAnnotationRow(cellId, plyIdx) {
-  const inst   = boardInstances.get(cellId);
-  const cellEl = document.querySelector(`.cell[data-id="${CSS.escape(cellId)}"]`);
-  if (!cellEl) return;
-  const targetFen = inst?.fens[plyIdx];
-  cellEl.querySelectorAll('.annotation-row').forEach(r => {
-    r.classList.toggle('active', !!targetFen && r.dataset.fen === targetFen);
-  });
-}
-
-// ── Board: extract game link ──────────────────────────────────────────────────
-
-function _getGameLink(pgn) {
-  const chess = new Chess();
-  try { chess.loadPgn(pgn || ''); } catch { return null; }
-  const h = chess.header ? chess.header() : {};
-  if (h.Site?.includes('lichess.org/'))  return h.Site;
-  if (h.Link?.includes('chess.com/'))    return h.Link;
-  if (h.Site?.includes('chess.com/'))    return h.Site;
-  return null;
-}
-
-// ── Annotations ───────────────────────────────────────────────────────────────
-
-// Append one row after a new move is played (always editable — only called in edit mode)
-function appendAnnotationRow(cellId, label, fen) {
-  const cellEl = document.querySelector(`.cell[data-id="${CSS.escape(cellId)}"]`);
-  const list   = cellEl?.querySelector('.annotation-list');
-  if (!list) return;
-  list.querySelector('.annotation-panel-empty')?.remove();
-  _addRowToList(list, cellId, label, fen, '', true);
-  list.lastElementChild?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
-}
-
-// Rebuild annotation list from the cell's current PGN
-function refreshAnnotationPanel(cellId) {
-  const cell   = getCell(cellId);
-  const cellEl = document.querySelector(`.cell[data-id="${CSS.escape(cellId)}"]`);
-  const list   = cellEl?.querySelector('.annotation-list');
-  if (!cell || !list) return;
-
-  const inst     = boardInstances.get(cellId);
-  const editable = inst?.isEditing ?? false;
-
-  const chess = new Chess();
-  try { chess.loadPgn(cell.pgn || ''); } catch { chess.reset(); }
-  const history = chess.history({ verbose: true });
-
-  if (history.length === 0) {
-    list.innerHTML = '<div class="annotation-panel-empty">No moves yet \u2014 use "\u270e PGN" to paste a game.</div>';
-    return;
-  }
-
-  const commentsByFen = new Map(
-    (chess.getComments?.() || []).map(({ fen, comment }) => [fen, comment])
-  );
-
-  const walker = new Chess();
-  list.innerHTML = '';
-  history.forEach((mv, i) => {
-    walker.move(mv.san);
-    const num   = Math.floor(i / 2) + 1;
-    const label = mv.color === 'w' ? `${num}. ${mv.san}` : `${num}\u2026 ${mv.san}`;
-    const fen   = walker.fen();
-    _addRowToList(list, cellId, label, fen, _userText(commentsByFen.get(fen) || ''), editable);
-  });
-
-  if (inst) _highlightAnnotationRow(cellId, inst.plyIdx);
-}
-
-// Shared row factory — editable only in edit mode; click label to navigate
-function _addRowToList(list, cellId, label, fen, comment, editable = false) {
-  let debounce;
-  const row = document.createElement('div');
-  row.className   = 'annotation-row';
-  row.dataset.fen = fen;
-
-  const labelSpan = document.createElement('span');
-  labelSpan.className   = 'annotation-move-label';
-  labelSpan.textContent = label;
-  labelSpan.addEventListener('click', e => {
-    e.stopPropagation();
-    const inst = boardInstances.get(cellId);
-    if (!inst) return;
-    const plyTarget = inst.fens.indexOf(fen);
-    if (plyTarget >= 0) navTo(cellId, plyTarget);
-  });
-
-  const note = document.createElement('div');
-  note.className           = 'annotation-note';
-  note.contentEditable     = editable ? 'plaintext-only' : 'false';
-  note.dataset.placeholder = 'Add a note…';
-  note.textContent         = comment || '';
-
-  note.addEventListener('input', () => {
-    clearTimeout(debounce);
-    debounce = setTimeout(() => rebuildPgnWithAnnotations(cellId), 500);
-  });
-
-  row.appendChild(labelSpan);
-  row.appendChild(note);
-  list.appendChild(row);
-}
-
-// Strip machine-generated PGN annotations ([%clk ...], [%eval ...], etc.) from
-// a comment, returning only the human-written text.
-function _userText(comment) {
-  return (comment || '').replace(/\[%[^\]]*\]/g, '').trim();
-}
-// Rebuild a full comment from human text + preserved specials from original.
-function _mergeComment(userText, originalComment) {
-  const specials = (originalComment || '').match(/\[%[^\]]*\]/g) || [];
-  return [...specials, ...(userText ? [userText] : [])].join(' ');
-}
-
-// Collect contenteditable values and rewrite cell.pgn — preserves PGN headers
-function rebuildPgnWithAnnotations(cellId) {
-  const cell   = getCell(cellId);
-  const cellEl = document.querySelector(`.cell[data-id="${CSS.escape(cellId)}"]`);
-  if (!cell || !cellEl) return;
-
-  const chess = new Chess();
-  try { chess.loadPgn(cell.pgn || ''); } catch { chess.reset(); }
-  const history = chess.history({ verbose: true });
-
-  // Preserve PGN headers (White, Black, Date, Event, etc.) before reset
-  const headers = chess.header ? chess.header() : {};
-
-  const originalComments = new Map(
-    (chess.getComments?.() || []).map(({ fen, comment }) => [fen, comment])
-  );
-
-  const fenToUserText = new Map();
-  cellEl.querySelectorAll('.annotation-row').forEach(row => {
-    const text = row.querySelector('.annotation-note')?.textContent?.trim();
-    if (text !== undefined) fenToUserText.set(row.dataset.fen, text);
-  });
-
-  chess.reset();
-  if (chess.deleteComments) chess.deleteComments();
-
-  // Re-apply original headers so they survive the rebuild
-  const headerEntries = Object.entries(headers).flat();
-  if (headerEntries.length > 0 && chess.header) chess.header(...headerEntries);
-
-  history.forEach(mv => {
-    chess.move(mv.san);
-    const fen     = chess.fen();
-    const userTxt = fenToUserText.get(fen) ?? '';
-    const merged  = _mergeComment(userTxt, originalComments.get(fen) || '');
-    if (merged && chess.setComment) chess.setComment(merged);
-  });
-
-  updateCellData(cellId, { pgn: chess.pgn() });
 }
 
 // ── DOM builders ──────────────────────────────────────────────────────────────
@@ -502,7 +115,7 @@ function buildTextCell(cell) {
       <div class="md-preview" style="${hasContent ? '' : 'display:none'}">${hasContent ? renderMarkdown(cell.content) : ''}</div>
     </div>`;
 
-  const ta     = div.querySelector('.md-editor');
+  const ta      = div.querySelector('.md-editor');
   const preview = div.querySelector('.md-preview');
   const toggle  = div.querySelector('.preview-toggle');
 
@@ -549,6 +162,7 @@ function buildBoardCell(cell) {
       <button class="btn-icon pgn-editor-btn" title="Edit / paste PGN">\u270e PGN</button>
       <button class="btn-icon flip-board" title="Flip board">\u21c5 Flip</button>
       <button class="btn-icon export-board" title="Export as PGN">\u2b07\ufe0e PGN</button>
+      <button class="btn-icon save-puzzle-btn" title="Save position as puzzle">\u{1F9E9}</button>
       <button class="btn-icon move-up" title="Move up">\u2191</button>
       <button class="btn-icon move-down" title="Move down">\u2193</button>
       <div class="cell-insert-wrap">
@@ -592,7 +206,7 @@ function buildBoardCell(cell) {
   });
 
   div.querySelector('.edit-moves-btn').addEventListener('click', () => {
-    const inst    = boardInstances.get(cell.id);
+    const inst    = getBoardInstance(cell.id);
     const editing = inst ? !inst.isEditing : true;
     if (!editing) rebuildPgnWithAnnotations(cell.id);
     setEditMode(cell.id, editing);
@@ -602,14 +216,14 @@ function buildBoardCell(cell) {
 
   div.querySelector('.flip-board').addEventListener('click', () => {
     const c          = getCell(cell.id);
-    const inst       = boardInstances.get(cell.id);
+    const inst       = getBoardInstance(cell.id);
     const savedPly   = inst?.plyIdx ?? 0;
     const wasEditing = inst?.isEditing ?? false;
     if (wasEditing) rebuildPgnWithAnnotations(cell.id);
     updateCellData(cell.id, { orientation: c.orientation === 'white' ? 'black' : 'white' });
     mountBoard(cell.id);
     if (savedPly > 0) {
-      const ni = boardInstances.get(cell.id);
+      const ni = getBoardInstance(cell.id);
       if (ni) navTo(cell.id, Math.min(savedPly, ni.fens.length - 1));
     }
     if (wasEditing) setEditMode(cell.id, true);
@@ -617,17 +231,18 @@ function buildBoardCell(cell) {
 
   div.querySelector('.export-board').addEventListener('click', () => exportBoard(cell.id));
   div.querySelector('.pgn-editor-btn').addEventListener('click', () => openPgnEditor(cell.id));
+  div.querySelector('.save-puzzle-btn').addEventListener('click', () => openSavePuzzleDialog(cell.id));
 
   // Move navigation
   div.querySelector('.nav-first').addEventListener('click', () => navTo(cell.id, 0));
   div.querySelector('.nav-prev').addEventListener('click', () => {
-    const inst = boardInstances.get(cell.id); if (inst) navTo(cell.id, inst.plyIdx - 1);
+    const inst = getBoardInstance(cell.id); if (inst) navTo(cell.id, inst.plyIdx - 1);
   });
   div.querySelector('.nav-next').addEventListener('click', () => {
-    const inst = boardInstances.get(cell.id); if (inst) navTo(cell.id, inst.plyIdx + 1);
+    const inst = getBoardInstance(cell.id); if (inst) navTo(cell.id, inst.plyIdx + 1);
   });
   div.querySelector('.nav-last').addEventListener('click', () => {
-    const inst = boardInstances.get(cell.id); if (inst) navTo(cell.id, inst.fens.length - 1);
+    const inst = getBoardInstance(cell.id); if (inst) navTo(cell.id, inst.fens.length - 1);
   });
 
   _bindInsertBtn(div, cell.id);
@@ -703,9 +318,7 @@ function deleteCell(id) {
   const idx = state.cells.findIndex(c => c.id === id);
   if (idx === -1) return;
 
-  const existing = boardInstances.get(id);
-  if (existing?.ground?.destroy) existing.ground.destroy();
-  boardInstances.delete(id);
+  destroyBoardInstance(id);
   state.cells.splice(idx, 1);
   document.querySelector(`.cell[data-id="${CSS.escape(id)}"]`)?.remove();
   updateEmptyState();
@@ -738,7 +351,6 @@ function updateEmptyState() {
 }
 
 // ── Event delegation (delete / move-up / move-down) ───────────────────────────
-// (per-cell buttons like flip / export-board / preview-toggle bind locally in builders)
 
 document.getElementById('notebook').addEventListener('click', e => {
   const btn  = e.target.closest('.btn-icon');
@@ -762,16 +374,13 @@ document.getElementById('notebookTitle').addEventListener('input', e => {
   scheduleAutoSave();
 });
 
-// ── Save / Load ───────────────────────────────────────────────────────────────
-
-// ── Sidebar + study management ────────────────────────────────────────────
+// ── Sidebar + study management ────────────────────────────────────────────────
 
 document.getElementById('sidebarToggle').addEventListener('click', () => {
   document.body.classList.toggle('sidebar-open');
 });
 
 function handleNewEntry() { saveCurrentStudy(); createNewStudy(); }
-document.getElementById('newEntryBtn').addEventListener('click', handleNewEntry);
 document.getElementById('sidebarNewBtn').addEventListener('click', handleNewEntry);
 
 function todayTitle() {
@@ -797,8 +406,7 @@ function openStudy(id) {
 }
 
 function loadStudyIntoEditor(data) {
-  boardInstances.forEach(inst => { if (inst?.ground?.destroy) inst.ground.destroy(); });
-  boardInstances.clear();
+  clearAllBoardInstances();
   state.cells = [];
   document.getElementById('notebook').innerHTML = '';
 
@@ -920,13 +528,16 @@ document.getElementById('importFile').addEventListener('change', e => {
 
 // ── Export ────────────────────────────────────────────────────────────────────
 
-document.getElementById('exportBtn').addEventListener('click', exportFullBook);
+document.getElementById('exportDiaryBtn').addEventListener('click', exportDiaryAsHtml);
 
-function exportFullBook() {
-  const title    = state.title || 'Untitled Study';
-  const bodyHtml = state.cells.map(cellToExportHtml).join('\n');
-  const filename = (title.replace(/[^a-z0-9]/gi, '-').toLowerCase() || 'chess-notebook') + '.html';
-  downloadBlob(buildExportPage(title, bodyHtml), 'text/html', filename);
+function exportDiaryAsHtml() {
+  saveCurrentStudy();
+  const studies = state.studiesIndex.map(entry => {
+    const data = loadStudyData(entry.id) || { id: entry.id, title: entry.title, cells: [] };
+    return { id: entry.id, title: entry.title, date: entry.date, cells: data.cells || [] };
+  });
+  const filename = 'chess-diary-' + new Date().toISOString().slice(0, 10) + '.html';
+  downloadBlob(buildDiaryExportPage(studies), 'text/html', filename);
 }
 
 function exportBoard(id) {
@@ -937,76 +548,171 @@ function exportBoard(id) {
   downloadBlob(pgn, 'application/x-chess-pgn', name + '.pgn');
 }
 
-function cellToExportHtml(cell) {
-  if (cell.type === 'text') {
-    return `<div class="cell cell-text">${renderMarkdown(cell.content)}</div>`;
-  }
-  const heading = cell.title
-    ? `<p class="board-label">${escapeHtml(cell.title)}</p>`
-    : '';
-  return `<div class="cell cell-board">
-  ${heading}
-  <div class="board-viewer"
-       data-pgn="${escapeAttr(cell.pgn || '')}"
-       data-orientation="${escapeAttr(cell.orientation || 'white')}"></div>
-</div>`;
-}
+function buildDiaryExportPage(studies) {
+  // Safely embed JSON — escape any </script> sequences inside string values
+  const safeStudies = JSON.stringify(studies).replace(/<\/script>/gi, '<\\/script>');
 
-function buildExportPage(title, bodyHtml) {
   return `<!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>${escapeHtml(title)}</title>
+  <title>Chess Diary</title>
   <link rel="stylesheet" href="https://unpkg.com/@lichess-org/pgn-viewer@2.6.0/dist/lichess-pgn-viewer.css">
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
     :root {
+      --sb-w: 240px;
       --bg: #f7f6f3; --surface: #fff; --border: #e2dfd7;
-      --text: #1a1a1a; --muted: #6b7280;
+      --text: #1a1a1a; --muted: #6b7280; --faint: #a0a09a;
+      --accent: #2563eb;
       --font: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
       --mono: ui-monospace, Menlo, monospace;
     }
     @media (prefers-color-scheme: dark) {
-      :root { --bg: #111110; --surface: #1c1c1b; --border: #333330; --text: #f0ede8; --muted: #9ca3af; }
+      :root { --bg: #111110; --surface: #1c1c1b; --border: #333330; --text: #f0ede8; --muted: #9ca3af; --faint: #55554e; }
     }
-    body { font-family: var(--font); background: var(--bg); color: var(--text); padding: 2rem 1rem; }
-    .notebook { max-width: 760px; margin: 0 auto; display: flex; flex-direction: column; gap: 1.25rem; }
-    h1.nb-title { font-size: 1.9rem; font-weight: 700; margin-bottom: 0.25rem; }
+    html, body { height: 100%; overflow: hidden; }
+    body { display: flex; font-family: var(--font); background: var(--bg); color: var(--text); }
+
+    /* Sidebar */
+    #diary-sidebar {
+      width: var(--sb-w); flex-shrink: 0;
+      border-right: 1px solid var(--border);
+      display: flex; flex-direction: column;
+      height: 100vh; overflow: hidden;
+      background: var(--surface);
+    }
+    .sb-header {
+      padding: 0.9rem 1rem 0.75rem;
+      font-size: 1rem; font-weight: 700;
+      border-bottom: 1px solid var(--border);
+      display: flex; align-items: center; gap: 0.45rem;
+      flex-shrink: 0;
+    }
+    #entry-list { flex: 1; overflow-y: auto; padding: 0.35rem 0; }
+    .entry-item {
+      padding: 0.55rem 0.85rem;
+      cursor: pointer;
+      border-left: 3px solid transparent;
+      transition: background 0.1s, border-color 0.1s;
+    }
+    .entry-item:hover { background: color-mix(in srgb, var(--accent) 6%, var(--bg)); }
+    .entry-item.active {
+      background: color-mix(in srgb, var(--accent) 9%, transparent);
+      border-left-color: var(--accent);
+    }
+    .entry-title { font-size: 0.84rem; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .entry-date  { font-size: 0.71rem; color: var(--faint); margin-top: 0.1rem; }
+    .sb-empty    { padding: 1rem; font-size: 0.82rem; color: var(--faint); }
+
+    /* Main content */
+    #diary-content { flex: 1; min-width: 0; height: 100vh; overflow-y: auto; padding: 2rem 1.5rem; }
+    #entry-view { max-width: 720px; margin: 0 auto; display: flex; flex-direction: column; gap: 1.1rem; }
+    .entry-heading { font-size: 1.75rem; font-weight: 700; padding-bottom: 0.6rem; border-bottom: 1px solid var(--border); }
+    .view-empty { color: var(--faint); font-size: 0.9rem; padding: 2rem 0; }
+
+    /* Cells */
     .cell { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
     .cell-text { padding: 1.1rem 1.25rem; line-height: 1.75; }
-    .cell-text h1 { font-size: 1.55rem; font-weight: 700; margin-bottom: .5rem; }
-    .cell-text h2 { font-size: 1.25rem; font-weight: 700; margin: 1rem 0 .4rem; }
-    .cell-text h3 { font-size: 1.05rem; font-weight: 600; margin: .9rem 0 .3rem; }
+    .cell-text h1 { font-size: 1.45rem; font-weight: 700; margin-bottom: .5rem; }
+    .cell-text h2 { font-size: 1.2rem;  font-weight: 700; margin: 1rem 0 .4rem; }
+    .cell-text h3 { font-size: 1.0rem;  font-weight: 600; margin: .9rem 0 .3rem; }
     .cell-text p  { margin-bottom: .75rem; }
     .cell-text p:last-child { margin-bottom: 0; }
     .cell-text ul, .cell-text ol { padding-left: 1.4rem; margin-bottom: .75rem; }
-    .cell-text code { background: #f3f2ef; padding: .1em .35em; border-radius: 3px; font-family: var(--mono); font-size: .86em; }
-    .cell-text pre  { background: #f3f2ef; border: 1px solid var(--border); padding: .75rem; border-radius: 6px; overflow-x: auto; margin-bottom: .75rem; }
+    .cell-text code { background: color-mix(in srgb, var(--border) 60%, transparent); padding: .1em .35em; border-radius: 3px; font-family: var(--mono); font-size: .86em; }
+    .cell-text pre { background: color-mix(in srgb, var(--border) 40%, transparent); border: 1px solid var(--border); padding: .75rem; border-radius: 6px; overflow-x: auto; margin-bottom: .75rem; }
     .cell-text pre code { background: none; padding: 0; }
     .cell-text blockquote { border-left: 3px solid var(--border); padding-left: .8rem; color: var(--muted); margin-bottom: .75rem; }
-    .cell-text a { color: #2563eb; }
+    .cell-text a { color: var(--accent); }
     .cell-text strong { font-weight: 600; }
+    .cell-text em { font-style: italic; }
     .cell-board { padding: 1rem; }
     .board-label { font-weight: 600; margin-bottom: .6rem; }
     .lpv--overlay { display: none !important; }
+
+    @media (max-width: 600px) {
+      :root { --sb-w: 180px; }
+      #diary-content { padding: 1.25rem 1rem; }
+    }
   </style>
 </head>
 <body>
-  <div class="notebook">
-    <h1 class="nb-title">${escapeHtml(title)}</h1>
-    ${bodyHtml}
+  <nav id="diary-sidebar">
+    <div class="sb-header">&#x265f; Chess Diary</div>
+    <div id="entry-list"></div>
+  </nav>
+  <div id="diary-content">
+    <div id="entry-view"></div>
   </div>
   <script type="module">
+    import { marked } from 'https://esm.sh/marked@14';
     import LichessPgnViewer from 'https://esm.sh/@lichess-org/pgn-viewer@2.6.0?bundle';
-    document.querySelectorAll('.board-viewer').forEach(function (el) {
-      LichessPgnViewer(el, {
-        pgn:         el.dataset.pgn || '',
-        orientation: el.dataset.orientation || 'white',
-        showCoords:  true,
+
+    const STUDIES = ${safeStudies};
+
+    function esc(s)     { return s ? s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;') : ''; }
+    function escAttr(s) { return s ? s.replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/'/g,'&#39;') : ''; }
+    function fmtDate(d) {
+      const dt = new Date(d);
+      return isNaN(dt) ? '' : dt.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+    }
+
+    const view    = document.getElementById('entry-view');
+    const content = document.getElementById('diary-content');
+    const list    = document.getElementById('entry-list');
+    let activeItem = null;
+
+    function showEntry(study) {
+      view.innerHTML = '';
+      const heading = Object.assign(document.createElement('h2'), { className: 'entry-heading', textContent: study.title || 'Untitled' });
+      view.appendChild(heading);
+
+      if (!study.cells || study.cells.length === 0) {
+        view.appendChild(Object.assign(document.createElement('p'), { className: 'view-empty', textContent: 'No content in this entry.' }));
+        return;
+      }
+
+      study.cells.forEach(cell => {
+        const el = document.createElement('div');
+        if (cell.type === 'text') {
+          el.className = 'cell cell-text';
+          el.innerHTML = marked.parse(cell.content || '');
+        } else {
+          el.className = 'cell cell-board';
+          const label = cell.title ? \`<p class="board-label">\${esc(cell.title)}</p>\` : '';
+          el.innerHTML = label + \`<div class="board-viewer" data-pgn="\${escAttr(cell.pgn||'')}" data-orientation="\${escAttr(cell.orientation||'white')}"></div>\`;
+        }
+        view.appendChild(el);
       });
-    });
+
+      view.querySelectorAll('.board-viewer').forEach(el => {
+        LichessPgnViewer(el, { pgn: el.dataset.pgn || '', orientation: el.dataset.orientation || 'white', showCoords: true });
+      });
+
+      content.scrollTop = 0;
+    }
+
+    if (STUDIES.length === 0) {
+      list.innerHTML = '<p class="sb-empty">No entries.</p>';
+    } else {
+      STUDIES.forEach(study => {
+        const item = document.createElement('div');
+        item.className = 'entry-item';
+        item.innerHTML = \`<div class="entry-title">\${esc(study.title)}</div><div class="entry-date">\${fmtDate(study.date)}</div>\`;
+        item.addEventListener('click', () => {
+          activeItem?.classList.remove('active');
+          item.classList.add('active');
+          activeItem = item;
+          showEntry(study);
+        });
+        list.appendChild(item);
+      });
+      list.firstElementChild.classList.add('active');
+      activeItem = list.firstElementChild;
+      showEntry(STUDIES[0]);
+    }
   <\/script>
 </body>
 </html>`;
@@ -1024,12 +730,6 @@ function downloadBlob(content, type, filename) {
 }
 
 // ── Settings ──────────────────────────────────────────────────────────────────
-
-function getBoardTheme() {
-  const t = loadSettings().boardTheme || 'auto';
-  if (t !== 'auto') return t;
-  return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'blue' : 'brown';
-}
 
 function loadSettings() {
   try { return JSON.parse(localStorage.getItem('cellular-settings') || '{}'); } catch { return {}; }
@@ -1063,7 +763,6 @@ document.getElementById('settingsSave').addEventListener('click', () => {
     boardTheme:   document.getElementById('settingsBoardTheme').value,
   });
   closeSettingsModal();
-  // Board theme is applied via CSS; no remount needed
 });
 
 // ── Game APIs ─────────────────────────────────────────────────────────────────
@@ -1095,7 +794,6 @@ async function fetchLichessGames(username, max) {
 }
 
 async function fetchChesscomGames(username, max) {
-  // fetch current month; if early in month (<= 5 days in), also fetch previous
   const now   = new Date();
   const yyyy  = now.getFullYear();
   const mm    = String(now.getMonth() + 1).padStart(2, '0');
@@ -1255,7 +953,7 @@ function openPgnEditor(cellId) {
 
   const apply = () => {
     const pgn        = document.getElementById('pgnEditorTextarea').value.trim();
-    const inst       = boardInstances.get(cellId);
+    const inst       = getBoardInstance(cellId);
     const wasEditing = inst?.isEditing ?? false;
     updateCellData(cellId, { pgn });
     mountBoard(cellId);

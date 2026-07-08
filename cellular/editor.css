@@ -98,7 +98,7 @@ body {
 
 /* ── Buttons ───────────────────────────────────────────────── */
 .btn {
-  padding: 0.3rem 0.7rem;
+  padding: 0.2rem 0.7rem;
   border-radius: 6px;
   border: 1px solid transparent;
   cursor: pointer;
@@ -298,190 +298,6 @@ body {
 .md-preview th, .md-preview td { border: 1px solid var(--border); padding: 0.4rem 0.65rem; }
 .md-preview th { background: var(--bg-subtle); font-weight: 600; }
 
-/* ── Board cell ────────────────────────────────────────────── */
-.cell-board .cell-body {
-  display: flex;
-  align-items: flex-start;
-  min-height: 340px;
-}
-
-/* Board title input in toolbar */
-.board-title-input {
-  border: none;
-  background: transparent;
-  font-size: 0.84rem;
-  font-weight: 500;
-  color: var(--text);
-  outline: none;
-  padding: 0.15rem 0.3rem;
-  border-radius: 4px;
-  max-width: 220px;
-  flex: 1;
-  font-family: var(--font);
-}
-.board-title-input:focus { background: var(--bg-hover); }
-.board-title-input::placeholder { color: var(--text-faint); }
-
-.board-viewer-wrap {
-  flex: 0 0 58%;
-  max-width: 58%;
-  width: 58%;
-  padding: 0.75rem;
-  background: var(--bg-subtle);
-  box-sizing: border-box;
-}
-
-/* Annotation panel — always visible beside the board */
-.annotation-panel {
-  display: flex;
-  flex: 1;
-  min-width: 0;
-  flex-direction: column;
-  border-left: 1px solid var(--border);
-  overflow-y: auto;
-  max-height: 520px;
-}
-.annotation-list {
-  flex: 1;
-  padding: 0.5rem 0;
-}
-/* annotation rows: compact label + inline editable note */
-.annotation-row {
-  display: flex;
-  align-items: baseline;
-  gap: 0.4rem;
-  padding: 0.35rem 0.75rem;
-  border-bottom: 1px solid var(--border);
-}
-.annotation-row:last-child { border-bottom: none; }
-.annotation-move-label {
-  font-size: 0.78rem;
-  font-weight: 600;
-  color: var(--text-muted);
-  font-family: var(--font-mono);
-  flex-shrink: 0;
-  white-space: nowrap;
-  line-height: 1.5;
-  cursor: pointer;
-  border-radius: 3px;
-  padding: 0 0.2em;
-}
-.annotation-move-label:hover { color: var(--accent); background: color-mix(in srgb, var(--accent) 8%, transparent); }
-/* Highlight the currently-navigated move row */
-.annotation-row.active { background: color-mix(in srgb, var(--accent) 8%, transparent); }
-.annotation-row.active .annotation-move-label { color: var(--accent); }
-/* Inline contenteditable annotation — looks like plain text, editable on click */
-.annotation-note {
-  flex: 1;
-  min-width: 0;
-  min-height: 1.4em;
-  font-size: 0.82rem;
-  line-height: 1.5;
-  color: var(--text);
-  border-radius: 3px;
-  padding: 0 0.25em;
-  cursor: text;
-  white-space: pre-wrap;
-  word-break: break-word;
-  outline: none;
-}
-.annotation-note:empty::before {
-  content: attr(data-placeholder);
-  color: var(--text-faint);
-  pointer-events: none;
-}
-.annotation-note:focus {
-  background: color-mix(in srgb, var(--accent) 5%, transparent);
-}
-.annotation-row:has(.annotation-note:focus) {
-  background: color-mix(in srgb, var(--accent) 4%, transparent);
-}
-.annotation-panel-empty {
-  padding: 1rem 0.75rem;
-  font-size: 0.82rem;
-  color: var(--text-faint);
-}
-
-/* pgn-viewer styles are retained for use in exported HTML */
-
-/* Chessground board */
-.cg-board { width: 100%; aspect-ratio: 1; display: block; }
-
-/* Undo button — hidden until edit mode */
-.undo-btn { display: none !important; }
-.undo-btn.is-visible { display: inline-flex !important; }
-
-/* ── Game info header ──────────────────────────────────────── */
-.board-game-header {
-  padding: 0.35rem 0.75rem;
-  background: var(--bg-subtle);
-  border-bottom: 1px solid var(--border);
-  display: flex;
-  align-items: baseline;
-  flex-wrap: wrap;
-  gap: 0.5rem;
-  font-size: 0.8rem;
-}
-.board-game-header[hidden] { display: none; }
-.gh-players { display: flex; align-items: center; gap: 0.3rem; }
-.gh-white, .gh-black { font-weight: 600; color: var(--text); }
-.gh-vs { color: var(--text-faint); font-size: 0.72rem; }
-.gh-result { font-weight: 600; color: var(--text-muted); margin-left: 0.15rem; }
-.gh-meta { display: flex; gap: 0.4rem; align-items: center; color: var(--text-muted); font-size: 0.75rem; }
-.gh-opening { font-style: italic; max-width: 22ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-
-/* ── Annotation nav bar ─────────────────────────────────────── */
-.annotation-nav {
-  display: flex;
-  align-items: center;
-  gap: 0.05rem;
-  padding: 0.2rem 0.4rem;
-  border-bottom: 1px solid var(--border);
-  background: var(--bg-subtle);
-  flex-shrink: 0;
-  top: 0;
-  position: sticky;
-}
-.nav-ply-counter {
-  flex: 1;
-  font-size: 0.72rem;
-  font-family: var(--font-mono);
-  color: var(--text-faint);
-  text-align: center;
-}
-.nav-game-link {
-  font-size: 0.75rem;
-  font-weight: 500;
-  color: var(--text-faint);
-  text-decoration: none;
-  padding: 0.15rem 0.3rem;
-  border-radius: 4px;
-  line-height: 1.4;
-  margin-left: 0.25rem;
-}
-.nav-game-link:hover { color: var(--accent); background: var(--bg-hover); }
-.nav-game-link[hidden] { display: none; }
-
-/* PGN editor textarea */
-.pgn-editor-textarea {
-  width: 100%;
-  min-height: 220px;
-  padding: 0.6rem 0.75rem;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  background: var(--bg);
-  color: var(--text);
-  font-family: var(--font-mono);
-  font-size: 0.82rem;
-  line-height: 1.6;
-  resize: vertical;
-  outline: none;
-  box-sizing: border-box;
-}
-.pgn-editor-textarea:focus {
-  border-color: var(--accent);
-  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 20%, transparent);
-}
 /* ── Sidebar ──────────────────────────────────────────────── */
 #sidebar {
   position: fixed;
@@ -580,13 +396,7 @@ body.sidebar-open #notebook-area { margin-left: var(--sidebar-w); }
   cursor: pointer;
 }
 #importLabel { display: flex; align-items: center; justify-content: center; }
-/* ── Responsive ────────────────────────────────────────────── */
-@media (max-width: 640px) {
-  .cell-board .board-viewer-wrap { flex: 0 0 100% !important; max-width: 100% !important; width: 100% !important; }
-  .cell-board .cell-body { flex-direction: column; }
-  .annotation-panel { max-height: 260px; border-left: none; border-top: 1px solid var(--border); }
-  .board-title-input { max-width: 140px; }
-}
+
 
 /* ── Modals ─────────────────────────────────────────────────── */
 .modal-overlay {
@@ -797,6 +607,59 @@ body.sidebar-open #notebook-area { margin-left: var(--sidebar-w); }
 .result-loss    { color: var(--danger); }
 .result-draw    { color: var(--text-muted); }
 @media (prefers-color-scheme: dark) { .result-win { color: #4ade80; } }
+
+/* ── Puzzle list ─────────────────────────────────────────────── */
+.puzzle-list-body { padding: 0; }
+.puzzle-list-row {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.65rem 1rem;
+  border-bottom: 1px solid var(--border);
+}
+.puzzle-list-row:last-child { border-bottom: none; }
+.puzzle-list-info { flex: 1; min-width: 0; }
+.puzzle-list-name { display: block; font-weight: 600; font-size: 0.9rem; color: var(--text); }
+.puzzle-list-meta { display: block; font-size: 0.76rem; color: var(--text-muted); margin-top: 0.1rem; }
+.puzzle-list-actions { display: flex; align-items: center; gap: 0.35rem; flex-shrink: 0; }
+
+/* ── Puzzle practice modal ───────────────────────────────────── */
+.modal-box--puzzle { max-width: 420px; }
+.puzzle-practice-body {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1rem;
+}
+.puzzle-board-outer { width: 100%; max-width: 340px; }
+.puzzle-board-outer .cg-board { width: 100%; aspect-ratio: 1; }
+.puzzle-practice-controls {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.5rem;
+  width: 100%;
+  max-width: 340px;
+}
+.puzzle-feedback {
+  font-size: 0.95rem;
+  font-weight: 500;
+  color: var(--text-muted);
+  min-height: 1.5em;
+  text-align: center;
+}
+.puzzle-feedback.correct { color: #16a34a; }
+@media (prefers-color-scheme: dark) { .puzzle-feedback.correct { color: #4ade80; } }
+.puzzle-feedback.wrong   { color: var(--danger); }
+.puzzle-btn-row { display: flex; gap: 0.5rem; }
+
+/* hint text in save-puzzle modal */
+.puzzle-save-hint {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  margin: 0;
+  line-height: 1.5;
+}
 
 .game-speed {
   font-size: 0.75rem;
