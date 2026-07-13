@@ -1,6 +1,6 @@
 # bri-bri-bri.github.io
 
-Personal project space. The apps here are built for my own use — mostly things I wanted to exist and couldn't find elsewhere, or things I wanted to understand by building. Nothing is monetized, nothing is tracked, and nothing is trying to sell you a subscription.
+Personal project space. The apps here are built for my own use — mostly things I wanted to exist and couldn't find elsewhere, or things I wanted to understand by building. Nothing is monetized, nothing is tracked, and nothing is trying to sell you a subscription. All of these webapps are static html pages that you can download for personal use and all data stays in your browser.
 
 ---
 
@@ -8,7 +8,7 @@ Personal project space. The apps here are built for my own use — mostly things
 
 ### Pomodoro
 
-A Pomodoro timer with built-in task list management. You can create named lists, add tasks to them, and have the timer read out the current task when each session starts (handy when you want to stay on track without looking at your screen). Task lists persist in local storage and the app installs as a PWA if you want it on your home screen.
+A Pomodoro timer with built-in task list management. You can create named lists, add tasks to them, and have the timer read out the current task when each session starts (handy when you want to stay on track without looking at your screen). Task lists persist in local storage and the app installs as a PWA if you want it on your phone home screen.
 
 ---
 
@@ -33,14 +33,23 @@ For games with a small, well-defined answer space, the decoder is further constr
 
 ---
 
+### Cellular: Chess Diary
+
+Your personal Chess Diary. Each journal entry is a page made of different cells. Text cells let you jot down thoughts and ideas in Markdown. Game cells let you add a position, make moves and add annotations.
+
+You can also import games from Chess.com and Lichess.org, then annotate each move for review. From saved positions, the app can turn your key moments into puzzles and exercises so you can practice what you learned.
+
+---
+
 ### World Map
 
 An interactive world map for exploring and learning country subdivisions (states, provinces, territories, etc.). The workflow is:
 
 1. The globe loads showing all countries.
 2. Click any country to zoom in and see its admin-level-1 subdivisions drawn as polygons.
-3. Subdivision labels are hidden by default — hover to reveal a region's name, so you can quiz yourself without spoilers.
+3. Subdivision labels are hidden by default - hover to reveal a region's name, so you can quiz yourself without spoilers.
 4. A "Show labels" toggle reveals all labels at once when you want them visible.
+5. After learning the regions of a country, review using World Map: Admin-1 Anki Deck [here](https://ankiweb.net/shared/info/702916596).
 
 #### Data sources
 
