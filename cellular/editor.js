@@ -96,8 +96,8 @@ function buildTextCell(cell) {
     <div class="cell-toolbar">
       <span class="cell-type-tag">Text</span>
       <div class="spacer"></div>
-      <button class="btn-icon preview-toggle${hasContent ? ' active' : ''}" title="Toggle edit/preview">
-        ${hasContent ? 'Preview' : '✏ Edit'}
+      <button class="btn-icon preview-toggle" title="Toggle edit/preview">
+        ${hasContent ? '✏ Edit' : 'Preview'}
       </button>
       <button class="btn-icon move-up" title="Move up">↑</button>
       <button class="btn-icon move-down" title="Move down">↓</button>
@@ -128,14 +128,14 @@ function buildTextCell(cell) {
       preview.innerHTML = renderMarkdown(content);
       ta.style.display      = 'none';
       preview.style.display = '';
-      toggle.textContent    = '👁 Preview';
-      toggle.classList.add('active');
+      toggle.textContent    = '✏ Edit';
+      toggle.classList.remove('active');
     } else {
       // → switch to edit
       ta.style.display      = '';
       preview.style.display = 'none';
-      toggle.textContent    = '✏ Edit';
-      toggle.classList.remove('active');
+      toggle.textContent    = 'Preview';
+      toggle.classList.add('active');
       ta.focus();
     }
   });

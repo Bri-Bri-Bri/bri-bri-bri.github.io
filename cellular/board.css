@@ -39,7 +39,7 @@
   flex-direction: column;
   border-left: 1px solid var(--border);
   overflow-y: auto;
-  max-height: 520px;
+  max-height: 480px;
 }
 .annotation-list {
   flex: 1;

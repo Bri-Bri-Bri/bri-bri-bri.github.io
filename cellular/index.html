@@ -15,7 +15,6 @@
   <header id="menubar">
     <button id="sidebarToggle" class="btn-icon" title="Toggle diary sidebar">☰</button>
     <span class="logo">♟ Cellular</span>
-    <button id="exportDiaryBtn" class="btn btn-primary" title="Export diary as standalone HTML">⬇ Export</button>
     <div class="spacer"></div>
     <div class="menu-section">
       <button id="addTextBtn" class="btn btn-ghost">+ Text</button>
@@ -92,6 +91,7 @@
         </div>
       </div>
       <div class="modal-footer">
+        <button id="exportDiaryBtn" class="btn btn-secondary" title="Export diary as standalone HTML">Export</button>
         <button class="btn btn-primary" id="settingsSave">Save</button>
       </div>
     </div>
@@ -109,7 +109,7 @@
       </div>
       <div class="modal-footer">
         <label class="modal-footer-option">
-          <input type="checkbox" id="gamesNewestFirst" checked>
+          <input type="checkbox" id="gamesNewestFirst">
           Newest first
         </label>
         <button class="btn btn-primary" id="gamesAddBtn" disabled>Add to diary</button>

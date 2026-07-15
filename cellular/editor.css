@@ -45,15 +45,20 @@
 
 /* Explicit dark override (set by shared navbar theme toggle) */
 :root[data-theme="dark"] {
-  --bg:           #111110;
-  --bg-raised:    #1c1c1b;
-  --bg-subtle:    #232321;
-  --bg-hover:     #2e2e2b;
-  --border:       #333330;
+  --bg:         #0f172a;
+  --surface:    #1e293b;
+  --primary:    #60a5fa;
+  --primary-dk: #3b82f6;
+  --text:       #f1f5f9;
+  --text-muted: #94a3b8;
+  --border:     #334155;
   --border-input: #4a4a47;
-  --text:         #f0ede8;
-  --text-muted:   #9ca3af;
-  --text-faint:   #6b7280;
+
+  --bg-raised:    #1e293b;
+  --bg-subtle:    #1e293b33;
+  --bg-hover:     #2e2e2b33;
+  --border:       #333330;
+
   --accent:       #60a5fa;
   --accent-hover: #93c5fd;
   --danger:       #f87171;
@@ -439,9 +444,9 @@ body.sidebar-open #notebook-area { margin-left: var(--sidebar-w); }
 .modal-footer {
   display: flex;
   align-items: center;
-  justify-content: flex-end;
+  justify-content: space-between;
   gap: 0.5rem;
-  padding: 0.75rem 1rem;
+  padding: 0.75rem 0.75rem;
   border-top: 1px solid var(--border);
   flex-shrink: 0;
 }
