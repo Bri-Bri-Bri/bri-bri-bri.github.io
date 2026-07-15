@@ -1,1 +1,8 @@
+# Directories
 .DS_Store
+node_modules/
+dist/
+
+# Files
+package-lock.json
+

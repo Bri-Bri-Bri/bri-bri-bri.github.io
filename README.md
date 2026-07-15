@@ -1,4 +1,4 @@
-# bri-bri-bri.github.io
+# [bri-bri-bri.github.io](bri-bri-bri.github.io)
 
 Personal project space. The apps here are built for my own use — mostly things I wanted to exist and couldn't find elsewhere, or things I wanted to understand by building. Nothing is monetized, nothing is tracked, and nothing is trying to sell you a subscription. All of these webapps are static html pages that you can download for personal use and all data stays in your browser.
 

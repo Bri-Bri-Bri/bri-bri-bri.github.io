@@ -5,7 +5,11 @@ import { getLegalMoveDests, getBoardInstance } from './board.js';
 // Circular imports from editor.js — safe: all are export function declarations (hoisted)
 import { getCell, uid, escapeHtml, escapeAttr } from './editor.js';
 
-let _puzzleState = null; // { puzzle, chess, ground, stepIdx, solved }
+let _puzzleState           = null; // { puzzle, chess, ground, stepIdx, solved }
+let _puzzleFolders         = [];   // loaded lazily in openPuzzlesModal
+let _expandedPuzzleFolders = new Set();
+let _activePuzzleFolderId  = null;
+let _puzzleModalWired      = false;
 
 // ── Puzzle storage ────────────────────────────────────────────────────────────
 
@@ -16,6 +20,92 @@ export function loadPuzzles() {
 
 export function savePuzzles(puzzles) {
   try { localStorage.setItem('cellular-puzzles', JSON.stringify(puzzles)); } catch {}
+}
+
+// ── Puzzle folder storage ───────────────────────────────────────────────────────────
+
+function loadPuzzleFolders() {
+  try { return JSON.parse(localStorage.getItem('cellular-puzzle-folders') || '[]'); }
+  catch { return []; }
+}
+function savePuzzleFolders() {
+  try { localStorage.setItem('cellular-puzzle-folders', JSON.stringify(_puzzleFolders)); } catch {}
+}
+
+// ── Puzzle folder helpers ──────────────────────────────────────────────────────────
+
+function getPuzzleFolderChildren(parentId) {
+  return _puzzleFolders.filter(f => (f.parentId ?? null) === (parentId ?? null));
+}
+
+function getPuzzlesInFolder(folderId, allPuzzles) {
+  return allPuzzles.filter(p => (p.folderId ?? null) === (folderId ?? null));
+}
+
+function isPuzzleFolderDescendantOf(folderId, potentialAncestorId) {
+  let current = _puzzleFolders.find(f => f.id === folderId);
+  while (current) {
+    if ((current.parentId ?? null) === potentialAncestorId) return true;
+    if (current.parentId === null || current.parentId === undefined) return false;
+    current = _puzzleFolders.find(f => f.id === current.parentId);
+  }
+  return false;
+}
+
+// ── Puzzle folder CRUD ─────────────────────────────────────────────────────────────
+
+function createPuzzleFolder(parentId = null) {
+  const name = prompt('Folder name:');
+  if (!name || !name.trim()) return;
+  const folder = { id: uid(), name: name.trim(), parentId: parentId ?? null, createdAt: new Date().toISOString() };
+  _puzzleFolders.push(folder);
+  savePuzzleFolders();
+  if (parentId) _expandedPuzzleFolders.add(parentId);
+  renderPuzzleList();
+}
+
+function renamePuzzleFolder(id) {
+  const folder = _puzzleFolders.find(f => f.id === id);
+  if (!folder) return;
+  const name = prompt('Rename folder:', folder.name);
+  if (!name || !name.trim()) return;
+  folder.name = name.trim();
+  savePuzzleFolders();
+  renderPuzzleList();
+}
+
+function deletePuzzleFolder(id) {
+  const allPuzzles = loadPuzzles();
+  const hasSubfolders = _puzzleFolders.some(f => (f.parentId ?? null) === id);
+  const hasPuzzles    = allPuzzles.some(p => (p.folderId ?? null) === id);
+  if (hasSubfolders || hasPuzzles) {
+    alert('Folder must be empty before deleting.\nMove or remove its contents first.');
+    return;
+  }
+  if (!confirm('Delete this folder?')) return;
+  const idx = _puzzleFolders.findIndex(f => f.id === id);
+  if (idx !== -1) _puzzleFolders.splice(idx, 1);
+  _expandedPuzzleFolders.delete(id);
+  if (_activePuzzleFolderId === id) _activePuzzleFolderId = null;
+  savePuzzleFolders();
+  renderPuzzleList();
+}
+
+function movePuzzleToFolder(puzzleId, targetFolderId) {
+  const allPuzzles = loadPuzzles();
+  const puzzle = allPuzzles.find(p => p.id === puzzleId);
+  if (!puzzle) return;
+  puzzle.folderId = targetFolderId ?? null;
+  savePuzzles(allPuzzles);
+  renderPuzzleList();
+}
+
+function movePuzzleFolderTo(folderId, targetParentId) {
+  const folder = _puzzleFolders.find(f => f.id === folderId);
+  if (!folder) return;
+  folder.parentId = targetParentId ?? null;
+  savePuzzleFolders();
+  renderPuzzleList();
 }
 
 // ── Save puzzle dialog ────────────────────────────────────────────────────────
@@ -223,6 +313,7 @@ function _confirmSavePuzzle() {
     solution,
     createdAt: new Date().toISOString(),
     fromStudy: modal._fromStudy || '',
+    folderId:  _activePuzzleFolderId ?? null,
   };
   const puzzles = loadPuzzles();
   puzzles.unshift(puzzle);
@@ -233,6 +324,13 @@ function _confirmSavePuzzle() {
 // ── Puzzles list modal ────────────────────────────────────────────────────────
 
 export function openPuzzlesModal() {
+  // Lazy-load folders and wire the "New Folder" button on first open
+  _puzzleFolders = loadPuzzleFolders();
+  if (!_puzzleModalWired) {
+    document.getElementById('puzzleNewFolderBtn')
+      .addEventListener('click', () => createPuzzleFolder(_activePuzzleFolderId));
+    _puzzleModalWired = true;
+  }
   document.getElementById('puzzlesModal').classList.add('is-open');
   renderPuzzleList();
 }
@@ -241,36 +339,177 @@ function renderPuzzleList() {
   const body    = document.getElementById('puzzlesModalBody');
   const puzzles = loadPuzzles();
 
-  if (puzzles.length === 0) {
+  if (puzzles.length === 0 && _puzzleFolders.length === 0) {
     body.innerHTML = '<p class="modal-empty">No puzzles yet.<br>Navigate to any board position and click <strong>\u{1F9E9}</strong> to save it.</p>';
     return;
   }
 
   body.innerHTML = '';
-  puzzles.forEach(puzzle => {
-    const row  = document.createElement('div');
-    row.className = 'puzzle-list-row';
-    const date = new Date(puzzle.createdAt).toLocaleDateString();
-    const mc   = puzzle.solution.length;
-    row.innerHTML = `
-      <div class="puzzle-list-info">
-        <span class="puzzle-list-name">${escapeHtml(puzzle.name)}</span>
-        <span class="puzzle-list-meta">${mc} move${mc !== 1 ? 's' : ''}${puzzle.fromStudy ? ' \u00b7 ' + escapeHtml(puzzle.fromStudy) : ''} \u00b7 ${date}</span>
-      </div>
-      <div class="puzzle-list-actions">
-        <button class="btn btn-primary puzzle-practice-btn" data-id="${escapeAttr(puzzle.id)}">\u25ba Practice</button>
-        <button class="btn-icon danger puzzle-delete-btn" data-id="${escapeAttr(puzzle.id)}" title="Delete">\u2715</button>
+  _renderPuzzleFolderLevel(body, null, 0, puzzles);
+
+  // Unfiled section at bottom (root-level puzzles)
+  const unfiledPuzzles = getPuzzlesInFolder(null, puzzles);
+  const hasUnfiledOrFolders = unfiledPuzzles.length > 0 || _puzzleFolders.length > 0;
+  if (hasUnfiledOrFolders && _puzzleFolders.length > 0) {
+    // Only show the "Unfiled" header when there are also folders (to differentiate)
+    const unfiledHeader = document.createElement('div');
+    unfiledHeader.className = 'puzzle-unfiled-header' + (_activePuzzleFolderId === null ? ' active' : '');
+    unfiledHeader.textContent = 'Unfiled';
+    unfiledHeader.title = 'Drop here to move to unfiled';
+    unfiledHeader.addEventListener('click', () => { _activePuzzleFolderId = null; renderPuzzleList(); });
+    _attachPuzzleDropTarget(unfiledHeader, null);
+    body.appendChild(unfiledHeader);
+    unfiledPuzzles.forEach(p => body.appendChild(_buildPuzzleRow(p)));
+  } else if (_puzzleFolders.length === 0) {
+    // No folders at all — just render puzzles directly
+    unfiledPuzzles.forEach(p => body.appendChild(_buildPuzzleRow(p)));
+  }
+}
+
+function _renderPuzzleFolderLevel(parentEl, parentFolderId, depth, allPuzzles) {
+  getPuzzleFolderChildren(parentFolderId).forEach(folder => {
+    const isExpanded = _expandedPuzzleFolders.has(folder.id);
+    const isActive   = _activePuzzleFolderId === folder.id;
+    const directPuzzleCount = getPuzzlesInFolder(folder.id, allPuzzles).length;
+
+    const section = document.createElement('div');
+    section.className = 'puzzle-folder-section';
+    section.dataset.folderId = folder.id;
+
+    const header = document.createElement('div');
+    header.className = 'puzzle-folder-header' + (isActive ? ' active' : '');
+    header.style.setProperty('--depth', depth);
+    header.draggable = true;
+    header.innerHTML = `
+      <button class="btn-icon puzzle-folder-toggle" title="${isExpanded ? 'Collapse' : 'Expand'}">${isExpanded ? '▾' : '▸'}</button>
+      <span class="puzzle-folder-icon">${isExpanded ? '📂' : '📁'}</span>
+      <span class="puzzle-folder-name">${escapeHtml(folder.name)}</span>
+      <span class="puzzle-folder-count">${directPuzzleCount}</span>
+      <div class="folder-menu-wrap">
+        <button class="btn-icon folder-menu-btn" title="Folder options">…</button>
+        <div class="folder-menu-dropdown">
+          <button class="folder-action folder-add-sub">+ New subfolder</button>
+          <button class="folder-action folder-rename">Rename</button>
+          <button class="folder-action folder-delete">Delete</button>
+        </div>
       </div>`;
-    row.querySelector('.puzzle-practice-btn').addEventListener('click', () => {
-      document.getElementById('puzzlesModal').classList.remove('is-open');
-      openPuzzlePractice(puzzle.id);
-    });
-    row.querySelector('.puzzle-delete-btn').addEventListener('click', () => {
-      const updated = loadPuzzles().filter(p => p.id !== puzzle.id);
-      savePuzzles(updated);
+
+    header.querySelector('.puzzle-folder-toggle').addEventListener('click', e => {
+      e.stopPropagation();
+      if (_expandedPuzzleFolders.has(folder.id)) _expandedPuzzleFolders.delete(folder.id);
+      else _expandedPuzzleFolders.add(folder.id);
       renderPuzzleList();
     });
-    body.appendChild(row);
+
+    header.addEventListener('click', e => {
+      if (e.target.closest('.folder-menu-wrap') || e.target.closest('.puzzle-folder-toggle')) return;
+      _activePuzzleFolderId = (_activePuzzleFolderId === folder.id) ? null : folder.id;
+      if (_activePuzzleFolderId === folder.id && !_expandedPuzzleFolders.has(folder.id)) {
+        _expandedPuzzleFolders.add(folder.id);
+      }
+      renderPuzzleList();
+    });
+
+    const menuWrap = header.querySelector('.folder-menu-wrap');
+    menuWrap.querySelector('.folder-menu-btn').addEventListener('click', e => {
+      e.stopPropagation();
+      const wasOpen = menuWrap.classList.contains('is-open');
+      document.querySelectorAll('.folder-menu-wrap.is-open').forEach(w => w.classList.remove('is-open'));
+      if (!wasOpen) {
+        menuWrap.classList.add('is-open');
+        const close = () => { menuWrap.classList.remove('is-open'); document.removeEventListener('click', close); };
+        document.addEventListener('click', close);
+      }
+    });
+    header.querySelector('.folder-add-sub').addEventListener('click', e => { e.stopPropagation(); createPuzzleFolder(folder.id); });
+    header.querySelector('.folder-rename').addEventListener('click',  e => { e.stopPropagation(); renamePuzzleFolder(folder.id); });
+    header.querySelector('.folder-delete').addEventListener('click',  e => { e.stopPropagation(); deletePuzzleFolder(folder.id); });
+
+    header.addEventListener('dragstart', e => {
+      e.stopPropagation();
+      e.dataTransfer.setData('puzzlefolderid', folder.id);
+      e.dataTransfer.effectAllowed = 'move';
+    });
+
+    section.appendChild(header);
+
+    const children = document.createElement('div');
+    children.className = 'puzzle-folder-children';
+    if (isExpanded) {
+      _renderPuzzleFolderLevel(children, folder.id, depth + 1, allPuzzles);
+      getPuzzlesInFolder(folder.id, allPuzzles).forEach(p => children.appendChild(_buildPuzzleRow(p)));
+    } else {
+      children.hidden = true;
+    }
+    section.appendChild(children);
+
+    _attachPuzzleDropTarget(section, folder.id);
+    parentEl.appendChild(section);
+  });
+}
+
+function _buildPuzzleRow(puzzle) {
+  const row  = document.createElement('div');
+  row.className = 'puzzle-list-row';
+  row.draggable = true;
+  const date = new Date(puzzle.createdAt).toLocaleDateString();
+  const mc   = puzzle.solution.length;
+  row.innerHTML = `
+    <div class="puzzle-list-info">
+      <span class="puzzle-list-name">${escapeHtml(puzzle.name)}</span>
+      <span class="puzzle-list-meta">${mc} move${mc !== 1 ? 's' : ''}${puzzle.fromStudy ? ' \u00b7 ' + escapeHtml(puzzle.fromStudy) : ''} \u00b7 ${date}</span>
+    </div>
+    <div class="puzzle-list-actions">
+      <button class="btn btn-primary puzzle-practice-btn" data-id="${escapeAttr(puzzle.id)}">\u25ba Practice</button>
+      <button class="btn-icon danger puzzle-delete-btn" data-id="${escapeAttr(puzzle.id)}" title="Delete">\u2715</button>
+    </div>`;
+  row.querySelector('.puzzle-practice-btn').addEventListener('click', () => {
+    document.getElementById('puzzlesModal').classList.remove('is-open');
+    openPuzzlePractice(puzzle.id);
+  });
+  row.querySelector('.puzzle-delete-btn').addEventListener('click', () => {
+    const updated = loadPuzzles().filter(p => p.id !== puzzle.id);
+    savePuzzles(updated);
+    renderPuzzleList();
+  });
+  row.addEventListener('dragstart', e => {
+    e.stopPropagation();
+    e.dataTransfer.setData('puzzleid', puzzle.id);
+    e.dataTransfer.effectAllowed = 'move';
+    document.body.classList.add('is-dragging');
+    document.addEventListener('dragend', () => document.body.classList.remove('is-dragging'), { once: true });
+  });
+  return row;
+}
+
+function _attachPuzzleDropTarget(el, targetFolderId) {
+  el.addEventListener('dragenter', e => {
+    if (![...e.dataTransfer.types].includes('puzzleid') && ![...e.dataTransfer.types].includes('puzzlefolderid')) return;
+    e.preventDefault();
+    e.stopPropagation();
+    el.classList.add('drag-over');
+  });
+  el.addEventListener('dragover', e => {
+    if (![...e.dataTransfer.types].includes('puzzleid') && ![...e.dataTransfer.types].includes('puzzlefolderid')) return;
+    e.preventDefault();
+    e.stopPropagation();
+  });
+  el.addEventListener('dragleave', e => {
+    if (!el.contains(e.relatedTarget)) el.classList.remove('drag-over');
+  });
+  el.addEventListener('drop', e => {
+    e.preventDefault();
+    e.stopPropagation();
+    el.classList.remove('drag-over');
+    const puzzleId         = e.dataTransfer.getData('puzzleid');
+    const draggedFolderId  = e.dataTransfer.getData('puzzlefolderid');
+    if (puzzleId) {
+      movePuzzleToFolder(puzzleId, targetFolderId);
+    } else if (draggedFolderId && draggedFolderId !== targetFolderId) {
+      if (targetFolderId === null || !isPuzzleFolderDescendantOf(targetFolderId, draggedFolderId)) {
+        movePuzzleFolderTo(draggedFolderId, targetFolderId);
+      }
+    }
   });
 }
 

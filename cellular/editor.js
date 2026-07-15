@@ -59,6 +59,93 @@ function loadIndex() {
 function saveIndex() {
   try { localStorage.setItem('cellular-index', JSON.stringify(state.studiesIndex)); } catch {}
 }
+
+// ── Folder storage ────────────────────────────────────────────────────────────
+
+function loadFolders() {
+  try { return JSON.parse(localStorage.getItem('cellular-folders') || '[]'); }
+  catch { return []; }
+}
+function saveFolders() {
+  try { localStorage.setItem('cellular-folders', JSON.stringify(state.folders)); } catch {}
+}
+
+// ── Folder helpers ────────────────────────────────────────────────────────────
+
+const _expandedFolders = new Set();
+
+function getFolderChildren(parentId) {
+  return state.folders.filter(f => (f.parentId ?? null) === (parentId ?? null));
+}
+
+function getStudiesInFolder(folderId) {
+  return state.studiesIndex.filter(s => (s.folderId ?? null) === (folderId ?? null));
+}
+
+function isFolderDescendantOf(folderId, potentialAncestorId) {
+  let current = state.folders.find(f => f.id === folderId);
+  while (current) {
+    if ((current.parentId ?? null) === potentialAncestorId) return true;
+    if (current.parentId === null || current.parentId === undefined) return false;
+    current = state.folders.find(f => f.id === current.parentId);
+  }
+  return false;
+}
+
+// ── Folder CRUD ───────────────────────────────────────────────────────────────
+
+function createFolder(parentId = null) {
+  const name = prompt('Folder name:');
+  if (!name || !name.trim()) return;
+  const folder = { id: uid(), name: name.trim(), parentId: parentId ?? null, createdAt: new Date().toISOString() };
+  state.folders.push(folder);
+  saveFolders();
+  if (parentId) _expandedFolders.add(parentId);
+  renderSidebar();
+}
+
+function renameFolder(id) {
+  const folder = state.folders.find(f => f.id === id);
+  if (!folder) return;
+  const name = prompt('Rename folder:', folder.name);
+  if (!name || !name.trim()) return;
+  folder.name = name.trim();
+  saveFolders();
+  renderSidebar();
+}
+
+function deleteFolder(id) {
+  const hasSubfolders = state.folders.some(f => (f.parentId ?? null) === id);
+  const hasStudies    = state.studiesIndex.some(s => (s.folderId ?? null) === id);
+  if (hasSubfolders || hasStudies) {
+    alert('Folder must be empty before deleting.\nMove or remove its contents first.');
+    return;
+  }
+  if (!confirm('Delete this folder?')) return;
+  const idx = state.folders.findIndex(f => f.id === id);
+  if (idx !== -1) state.folders.splice(idx, 1);
+  _expandedFolders.delete(id);
+  if (state.activeFolderId === id) state.activeFolderId = null;
+  saveFolders();
+  renderSidebar();
+}
+
+function moveStudyToFolder(studyId, targetFolderId) {
+  const entry = state.studiesIndex.find(s => s.id === studyId);
+  if (!entry) return;
+  entry.folderId = targetFolderId ?? null;
+  saveIndex();
+  renderSidebar();
+}
+
+function moveFolderToFolder(folderId, targetParentId) {
+  const folder = state.folders.find(f => f.id === folderId);
+  if (!folder) return;
+  folder.parentId = targetParentId ?? null;
+  saveFolders();
+  renderSidebar();
+}
+
 function loadStudyData(id) {
   try { return JSON.parse(localStorage.getItem('cellular-study-' + id)); } catch { return null; }
 }
@@ -381,6 +468,7 @@ document.getElementById('sidebarToggle').addEventListener('click', () => {
 
 function handleNewEntry() { saveCurrentStudy(); createNewStudy(); }
 document.getElementById('sidebarNewBtn').addEventListener('click', handleNewEntry);
+document.getElementById('sidebarNewFolderBtn').addEventListener('click', () => createFolder(state.activeFolderId));
 
 function todayTitle() {
   return new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
@@ -393,7 +481,7 @@ function createNewStudy() {
 
   const id  = uid();
   const now = new Date().toISOString();
-  state.studiesIndex.unshift({ id, title, date: now, updatedAt: now });
+  state.studiesIndex.unshift({ id, title, date: now, updatedAt: now, folderId: state.activeFolderId ?? null });
   saveIndex();
   loadStudyIntoEditor({ id, title, cells: [] });
 }
@@ -431,23 +519,176 @@ function renderSidebar() {
   const container = document.getElementById('sidebar-entries');
   if (!container) return;
   container.innerHTML = '';
-  state.studiesIndex.forEach(entry => {
-    const div  = document.createElement('div');
-    div.className = 'sidebar-entry' + (entry.id === state.studyId ? ' active' : '');
-    const d    = new Date(entry.date);
-    const meta = isNaN(d) ? '' : d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
-    div.innerHTML = `
-      <div class="entry-info">
-        <div class="entry-title">${escapeHtml(entry.title)}</div>
-        <div class="entry-meta">${escapeHtml(meta)}</div>
-      </div>
-      <button class="sidebar-delete-btn" title="Delete entry" aria-label="Delete entry">✕</button>`;
-    div.addEventListener('click', () => { if (entry.id !== state.studyId) openStudy(entry.id); });
-    div.querySelector('.sidebar-delete-btn').addEventListener('click', e => {
+
+  // Root drop zone — always visible at top, accepts drops to un-file items
+  const rootZone = document.createElement('div');
+  rootZone.className = 'sidebar-drop-root' + (state.activeFolderId === null ? ' active' : '');
+  rootZone.textContent = 'Unfiled';
+  rootZone.title = 'Drop here to move to root / unfiled';
+  rootZone.addEventListener('click', () => {
+    state.activeFolderId = null;
+    renderSidebar();
+  });
+  _attachSidebarDropTarget(rootZone, null);
+  container.appendChild(rootZone);
+
+  _renderFolderLevel(container, null, 0);
+
+  // Container itself handles drops on empty space → root
+  container.addEventListener('dragover', e => {
+    if (![...e.dataTransfer.types].includes('studyid') && ![...e.dataTransfer.types].includes('folderid')) return;
+    e.preventDefault();
+  });
+  container.addEventListener('drop', e => {
+    if (e.defaultPrevented) return;
+    const studyId        = e.dataTransfer.getData('studyid');
+    const draggedFolderId = e.dataTransfer.getData('folderid');
+    if (studyId)        moveStudyToFolder(studyId, null);
+    else if (draggedFolderId) moveFolderToFolder(draggedFolderId, null);
+  });
+}
+
+function _renderFolderLevel(parentEl, parentFolderId, depth) {
+  getFolderChildren(parentFolderId).forEach(folder => {
+    const isExpanded = _expandedFolders.has(folder.id);
+    const isActive   = state.activeFolderId === folder.id;
+
+    const wrap = document.createElement('div');
+    wrap.className = 'sidebar-folder-wrap';
+    wrap.dataset.folderId = folder.id;
+
+    const row = document.createElement('div');
+    row.className = 'sidebar-folder-row' + (isActive ? ' active' : '');
+    row.style.setProperty('--depth', depth);
+    row.draggable = true;
+    row.innerHTML = `
+      <button class="btn-icon folder-toggle" title="${isExpanded ? 'Collapse' : 'Expand'}">${isExpanded ? '▾' : '▸'}</button>
+      <span class="folder-icon">${isExpanded ? '📂' : '📁'}</span>
+      <span class="folder-name">${escapeHtml(folder.name)}</span>
+      <div class="folder-menu-wrap">
+        <button class="btn-icon folder-menu-btn" title="Folder options">…</button>
+        <div class="folder-menu-dropdown">
+          <button class="folder-action folder-add-sub">+ New subfolder</button>
+          <button class="folder-action folder-rename">Rename</button>
+          <button class="folder-action folder-delete">Delete</button>
+        </div>
+      </div>`;
+
+    row.querySelector('.folder-toggle').addEventListener('click', e => {
       e.stopPropagation();
-      deleteStudy(entry.id);
+      if (_expandedFolders.has(folder.id)) _expandedFolders.delete(folder.id);
+      else _expandedFolders.add(folder.id);
+      renderSidebar();
     });
-    container.appendChild(div);
+
+    row.addEventListener('click', e => {
+      if (e.target.closest('.folder-menu-wrap') || e.target.closest('.folder-toggle')) return;
+      state.activeFolderId = (state.activeFolderId === folder.id) ? null : folder.id;
+      if (state.activeFolderId === folder.id && !_expandedFolders.has(folder.id)) {
+        _expandedFolders.add(folder.id);
+      }
+      renderSidebar();
+    });
+
+    // Folder context menu
+    const menuWrap = row.querySelector('.folder-menu-wrap');
+    menuWrap.querySelector('.folder-menu-btn').addEventListener('click', e => {
+      e.stopPropagation();
+      const wasOpen = menuWrap.classList.contains('is-open');
+      document.querySelectorAll('.folder-menu-wrap.is-open').forEach(w => w.classList.remove('is-open'));
+      if (!wasOpen) {
+        menuWrap.classList.add('is-open');
+        const close = () => { menuWrap.classList.remove('is-open'); document.removeEventListener('click', close); };
+        document.addEventListener('click', close);
+      }
+    });
+    row.querySelector('.folder-add-sub').addEventListener('click', e => { e.stopPropagation(); createFolder(folder.id); });
+    row.querySelector('.folder-rename').addEventListener('click',  e => { e.stopPropagation(); renameFolder(folder.id); });
+    row.querySelector('.folder-delete').addEventListener('click',  e => { e.stopPropagation(); deleteFolder(folder.id); });
+
+    // Drag source for folders
+    row.addEventListener('dragstart', e => {
+      e.stopPropagation();
+      e.dataTransfer.setData('folderid', folder.id);
+      e.dataTransfer.effectAllowed = 'move';
+    });
+
+    wrap.appendChild(row);
+
+    // Children container
+    const children = document.createElement('div');
+    children.className = 'sidebar-folder-children';
+    if (isExpanded) _renderFolderLevel(children, folder.id, depth + 1);
+    else children.hidden = true;
+    wrap.appendChild(children);
+
+    _attachSidebarDropTarget(wrap, folder.id);
+    parentEl.appendChild(wrap);
+  });
+
+  // Entries in this folder level
+  getStudiesInFolder(parentFolderId).forEach(entry => {
+    parentEl.appendChild(_buildEntryNode(entry, depth));
+  });
+}
+
+function _buildEntryNode(entry, depth) {
+  const div = document.createElement('div');
+  div.className = 'sidebar-entry' + (entry.id === state.studyId ? ' active' : '');
+  div.style.setProperty('--depth', depth);
+  div.draggable = true;
+  const d    = new Date(entry.date);
+  const meta = isNaN(d) ? '' : d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+  div.innerHTML = `
+    <div class="entry-info">
+      <div class="entry-title">${escapeHtml(entry.title)}</div>
+      <div class="entry-meta">${escapeHtml(meta)}</div>
+    </div>
+    <button class="sidebar-delete-btn" title="Delete entry" aria-label="Delete entry">✕</button>`;
+  div.addEventListener('click', () => { if (entry.id !== state.studyId) openStudy(entry.id); });
+  div.querySelector('.sidebar-delete-btn').addEventListener('click', e => {
+    e.stopPropagation();
+    deleteStudy(entry.id);
+  });
+  div.addEventListener('dragstart', e => {
+    e.stopPropagation();
+    e.dataTransfer.setData('studyid', entry.id);
+    e.dataTransfer.effectAllowed = 'move';
+    document.body.classList.add('is-dragging');
+    document.addEventListener('dragend', () => document.body.classList.remove('is-dragging'), { once: true });
+  });
+  return div;
+}
+
+function _attachSidebarDropTarget(el, targetFolderId) {
+  el.addEventListener('dragenter', e => {
+    if (![...e.dataTransfer.types].includes('studyid') && ![...e.dataTransfer.types].includes('folderid')) return;
+    e.preventDefault();
+    e.stopPropagation();
+    el.classList.add('drag-over');
+  });
+  el.addEventListener('dragover', e => {
+    if (![...e.dataTransfer.types].includes('studyid') && ![...e.dataTransfer.types].includes('folderid')) return;
+    e.preventDefault();
+    e.stopPropagation();
+  });
+  el.addEventListener('dragleave', e => {
+    if (!el.contains(e.relatedTarget)) el.classList.remove('drag-over');
+  });
+  el.addEventListener('drop', e => {
+    e.preventDefault();
+    e.stopPropagation();
+    el.classList.remove('drag-over');
+    const studyId         = e.dataTransfer.getData('studyid');
+    const draggedFolderId = e.dataTransfer.getData('folderid');
+    if (studyId) {
+      moveStudyToFolder(studyId, targetFolderId);
+    } else if (draggedFolderId && draggedFolderId !== targetFolderId) {
+      // Prevent moving a folder into its own descendant
+      if (targetFolderId === null || !isFolderDescendantOf(targetFolderId, draggedFolderId)) {
+        moveFolderToFolder(draggedFolderId, targetFolderId);
+      }
+    }
   });
 }
 
@@ -981,6 +1222,7 @@ document.getElementById('pgnEditorModal').addEventListener('click', e => {
 
 (function init() {
   state.studiesIndex = loadIndex();
+  state.folders = loadFolders();
 
   // Migrate from the original single-notebook localStorage key
   const legacy = localStorage.getItem('cellular-notebook');

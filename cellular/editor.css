@@ -12,6 +12,7 @@
   --accent:       #2563eb;
   --accent-hover: #1d4ed8;
   --danger:       #dc2626;
+  --folder-active: #d97706;  /* amber — "new entries land here" */
   /* aliases used by the shared navbar */
   --surface:      var(--bg-raised);
   --muted:        var(--text-muted);
@@ -30,7 +31,7 @@
     --bg:           #111110;
     --bg-raised:    #1c1c1b;
     --bg-subtle:    #232321;
-    --bg-hover:     #2e2e2b;
+    --bg-hover:     #0f172a;
     --border:       #333330;
     --border-input: #4a4a47;
     --text:         #f0ede8;
@@ -39,6 +40,7 @@
     --accent:       #60a5fa;
     --accent-hover: #93c5fd;
     --danger:       #f87171;
+    --folder-active: #f59e0b; /* amber dark-mode */
     color-scheme: dark;
   }
 }
@@ -56,7 +58,7 @@
 
   --bg-raised:    #1e293b;
   --bg-subtle:    #1e293b33;
-  --bg-hover:     #2e2e2b33;
+  --bg-hover:     #0f172a;
   --border:       #333330;
 
   --accent:       #60a5fa;
@@ -342,12 +344,12 @@ body.sidebar-open #sidebar { transform: translateX(0); }
 .sidebar-entry {
   display: flex;
   align-items: center;
-  padding: 0.55rem 0.55rem 0.55rem 0.85rem;
+  padding: 0.55rem 0.55rem 0.55rem calc(0.85rem + var(--depth, 0) * 16px);
   cursor: pointer;
   border-left: 3px solid transparent;
   transition: background 0.1s, border-color 0.1s;
 }
-.sidebar-entry:hover { background: var(--bg-hover); }
+.sidebar-entry:hover { background-color: var(--bg-hover); }
 .sidebar-entry.active {
   background: color-mix(in srgb, var(--accent) 9%, transparent);
   border-left-color: var(--accent);
@@ -767,3 +769,194 @@ body.sidebar-open #notebook-area { margin-left: var(--sidebar-w); }
   padding-left: 1.7rem;
   margin-top: -0.05rem;
 }
+
+/* ── Sidebar folder tree ──────────────────────────────────────── */
+
+.sidebar-drop-root {
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-faint);
+  padding: 0.38rem 0.85rem 0.35rem;
+  border-bottom: 1px solid var(--border);
+  cursor: pointer;
+  transition: background 0.1s, color 0.1s;
+  user-select: none;
+}
+.sidebar-drop-root:hover { background: var(--bg-hover); color: var(--text-muted); }
+.sidebar-drop-root.active { color: var(--folder-active); }
+.sidebar-drop-root.drag-over {
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  color: var(--accent);
+  outline: 2px dashed color-mix(in srgb, var(--accent) 40%, transparent);
+  outline-offset: -2px;
+}
+
+.sidebar-folder-row {
+  display: flex;
+  align-items: center;
+  gap: 0.2rem;
+  padding: 0.42rem 0.5rem 0.42rem calc(0.65rem + var(--depth, 0) * 16px);
+  cursor: pointer;
+  border-left: 3px solid transparent;
+  transition: background 0.1s, border-color 0.1s;
+  user-select: none;
+}
+.sidebar-folder-row:hover { background: var(--bg-hover); }
+.sidebar-folder-row.active {
+  background: color-mix(in srgb, var(--folder-active) 10%, transparent);
+  border-left-color: var(--folder-active);
+}
+.sidebar-folder-row.active .folder-name {
+  color: var(--folder-active);
+}
+
+.folder-toggle {
+  font-size: 0.6rem !important;
+  color: var(--text-faint) !important;
+  padding: 0.15rem 0.2rem !important;
+  flex-shrink: 0;
+  line-height: 1;
+}
+.folder-icon {
+  font-size: 0.82rem;
+  flex-shrink: 0;
+  line-height: 1;
+  margin: 0 0.05rem;
+}
+.folder-name {
+  flex: 1;
+  min-width: 0;
+  font-size: 0.84rem;
+  font-weight: 600;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.folder-menu-wrap { position: relative; flex-shrink: 0; }
+.folder-menu-btn { opacity: 0; transition: opacity 0.15s; }
+.sidebar-folder-row:hover .folder-menu-btn,
+.puzzle-folder-header:hover .folder-menu-btn { opacity: 1; }
+
+.folder-menu-dropdown {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 2px);
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0.25rem;
+  z-index: 700;
+  min-width: 140px;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.14);
+  display: none;
+  flex-direction: column;
+  gap: 0.1rem;
+}
+.folder-menu-wrap.is-open .folder-menu-dropdown { display: flex; }
+
+.folder-action {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 0.3rem 0.65rem;
+  font-size: 0.8rem;
+  border-radius: 4px;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  color: var(--text);
+  font-family: var(--font);
+  line-height: 1.4;
+}
+.folder-action:hover { background: var(--bg-hover); }
+.folder-delete { color: var(--danger); }
+.folder-delete:hover { background: color-mix(in srgb, var(--danger) 8%, transparent) !important; }
+
+.sidebar-folder-wrap.drag-over > .sidebar-folder-row {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  border-left-color: var(--accent);
+  outline: 2px dashed color-mix(in srgb, var(--accent) 35%, transparent);
+  outline-offset: -2px;
+}
+
+/* ── Puzzle folder tree ───────────────────────────────────────── */
+
+.puzzle-folder-section {
+  border-bottom: 1px solid var(--border);
+}
+.puzzle-folder-section:last-child { border-bottom: none; }
+
+.puzzle-folder-header {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.5rem 1rem 0.5rem calc(1rem + var(--depth, 0) * 16px);
+  cursor: pointer;
+  background: var(--bg-subtle);
+  border-bottom: 1px solid var(--border);
+  transition: background 0.1s;
+  user-select: none;
+}
+.puzzle-folder-header:hover { background: var(--bg-hover); }
+.puzzle-folder-header.active {
+  background: color-mix(in srgb, var(--folder-active) 10%, transparent);
+  border-left: 3px solid var(--folder-active);
+}
+.puzzle-folder-header.active .puzzle-folder-name { color: var(--folder-active); }
+
+.puzzle-folder-toggle { font-size: 0.6rem !important; color: var(--text-faint) !important; flex-shrink: 0; }
+.puzzle-folder-icon   { font-size: 0.82rem; flex-shrink: 0; }
+.puzzle-folder-name   { flex: 1; font-size: 0.88rem; font-weight: 600; color: var(--text); min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.puzzle-folder-count  {
+  font-size: 0.7rem;
+  background: var(--bg-hover);
+  color: var(--text-muted);
+  padding: 0.05rem 0.4rem;
+  border-radius: 8px;
+  flex-shrink: 0;
+}
+.puzzle-folder-header .folder-menu-wrap { flex-shrink: 0; }
+
+.puzzle-folder-section.drag-over > .puzzle-folder-header {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  outline: 2px dashed color-mix(in srgb, var(--accent) 35%, transparent);
+  outline-offset: -2px;
+}
+
+.puzzle-unfiled-header {
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-faint);
+  padding: 0.45rem 1rem 0.35rem;
+  border-bottom: 1px solid var(--border);
+  cursor: pointer;
+  transition: background 0.1s, color 0.1s;
+  user-select: none;
+}
+.puzzle-unfiled-header:hover { background: var(--bg-hover); color: var(--text-muted); }
+.puzzle-unfiled-header.active { color: var(--folder-active); }
+.puzzle-unfiled-header.drag-over {
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  color: var(--accent);
+  outline: 2px dashed color-mix(in srgb, var(--accent) 35%, transparent);
+  outline-offset: -2px;
+}
+
+/* Draggable rows */
+.puzzle-list-row[draggable="true"] { cursor: grab; }
+.puzzle-list-row[draggable="true"]:active { cursor: grabbing; }
+
+/* Sidebar draggable entries */
+.sidebar-entry[draggable="true"] { cursor: grab; }
+.sidebar-entry[draggable="true"]:active { cursor: grabbing; }
+.sidebar-folder-row[draggable="true"] { cursor: grab; }
+
+/* Puzzles modal header: align new-folder btn before close btn */
+#puzzlesModal .modal-header { gap: 0.5rem; }
+#puzzlesModal .modal-header h3 { flex: 1; }

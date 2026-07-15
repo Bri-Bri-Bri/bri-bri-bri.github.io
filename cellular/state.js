@@ -3,10 +3,12 @@
 
 // Study state
 export const state = {
-  studyId:      null, // currently loaded study
-  title:        '',
-  cells:        [],
-  studiesIndex: [], // [{ id, title, date, updatedAt }]
+  studyId:        null,  // currently loaded study
+  title:          '',
+  cells:          [],
+  studiesIndex:   [],    // [{ id, title, date, updatedAt, folderId }]
+  folders:        [],    // [{ id, name, parentId, createdAt }]
+  activeFolderId: null,  // newly created studies land here (null = root)
 };
 
 // cellId → { chess, ground, fens, plyIdx, isEditing }
