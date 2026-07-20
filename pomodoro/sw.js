@@ -1,6 +1,7 @@
-// Bump this version string whenever you deploy changes,
-// so returning users get a fresh cache.
-const CACHE = 'pomodoro-v1';
+// CACHE_VERSION is bumped automatically on every commit by the pre-commit hook.
+// The 'pomodoro-' prefix scopes purges to this project only — Cache Storage
+// is origin-wide, so other sub-projects on the same origin are left untouched.
+const CACHE_VERSION = 'pomodoro-v20260720234135';
 
 const PRECACHE = [
   './',
@@ -14,7 +15,7 @@ const PRECACHE = [
 // ── Install: pre-cache all app shell assets ────────────────────
 self.addEventListener('install', e => {
   e.waitUntil(
-    caches.open(CACHE)
+    caches.open(CACHE_VERSION)
       .then(c => c.addAll(PRECACHE))
       .then(() => self.skipWaiting())
   );
@@ -25,7 +26,7 @@ self.addEventListener('activate', e => {
   e.waitUntil(
     caches.keys()
       .then(keys => Promise.all(
-        keys.filter(k => k !== CACHE).map(k => caches.delete(k))
+        keys.filter(k => k.startsWith('pomodoro-') && k !== CACHE_VERSION).map(k => caches.delete(k))
       ))
       .then(() => self.clients.claim())
   );
@@ -38,7 +39,7 @@ self.addEventListener('fetch', e => {
     e.respondWith(
       fetch(e.request)
         .then(resp => {
-          caches.open(CACHE).then(c => c.put(e.request, resp.clone()));
+          caches.open(CACHE_VERSION).then(c => c.put(e.request, resp.clone()));
           return resp;
         })
         .catch(() => caches.match('./'))
@@ -51,7 +52,7 @@ self.addEventListener('fetch', e => {
     caches.match(e.request).then(cached => {
       if (cached) return cached;
       return fetch(e.request).then(resp => {
-        if (resp.ok) caches.open(CACHE).then(c => c.put(e.request, resp.clone()));
+        if (resp.ok) caches.open(CACHE_VERSION).then(c => c.put(e.request, resp.clone()));
         return resp;
       });
     })

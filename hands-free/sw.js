@@ -8,8 +8,10 @@
 //     in a separate Cache Storage bucket — no need to handle them here.
 //
 // Bump CACHE_VERSION on every deploy to purge stale assets.
+// The 'hands-free-' prefix scopes purges to this project only — Cache Storage
+// is origin-wide, so other sub-projects on the same origin are left untouched.
 
-const CACHE_VERSION = 'v20260720221935';
+const CACHE_VERSION = 'hands-free-v20260720234135';
 
 const APP_SHELL = [
   './',
@@ -41,7 +43,7 @@ self.addEventListener('activate', function (e) {
       .then(function (keys) {
         return Promise.all(
           keys
-            .filter(function (k) { return k !== CACHE_VERSION; })
+            .filter(function (k) { return k.startsWith('hands-free-') && k !== CACHE_VERSION; })
             .map(function (k)   { return caches.delete(k); })
         );
       })

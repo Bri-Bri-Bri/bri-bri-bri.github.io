@@ -1,12 +1,23 @@
 #!/bin/sh
-# Bump SW cache version to a timestamp on every commit so browsers
-# pick up new assets immediately after a push to GitHub Pages.
+# Bump the cache-version timestamp in every service worker on each commit,
+# so browsers discard stale cached assets after a deploy.
+#
+# Convention: every sw.js in this repo uses
+#   const CACHE_VERSION = 'project-name-vYYYYMMDDHHmmss';
+# The project prefix (e.g. 'hands-free-', 'pomodoro-') stays constant;
+# only the vYYYYMMDDHHmmss timestamp is replaced.  The prefix scopes each
+# SW's cache-purge to its own project, since Cache Storage is origin-wide.
 
 VERSION="v$(date -u +%Y%m%d%H%M%S)"
 
-for SW in hands-free/sw.js coi-serviceworker.js; do
-  if [ -f "$SW" ]; then
-    sed -i '' "s/CACHE_VERSION = '[^']*'/CACHE_VERSION = '${VERSION}'/" "$SW"
+find . -name 'sw.js' \
+       -not -path './node_modules/*' \
+       -not -path './.git/*' | while read SW; do
+  if grep -q 'const CACHE_VERSION' "$SW"; then
+    # Preserve the project prefix; replace only the v+timestamp portion.
+    # Matches: CACHE_VERSION = 'prefix-v20260720221935'
+    sed -i '' "s/\\(CACHE_VERSION = '[^']*-\\)v[0-9][0-9]*/\\1${VERSION}/" "$SW"
     git add "$SW"
+    echo "  bumped: $SW -> ${VERSION}"
   fi
 done

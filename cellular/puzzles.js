@@ -24,12 +24,20 @@ export function savePuzzles(puzzles) {
 
 // ── Puzzle folder storage ───────────────────────────────────────────────────────────
 
-function loadPuzzleFolders() {
+export function loadPuzzleFolders() {
   try { return JSON.parse(localStorage.getItem('cellular-puzzle-folders') || '[]'); }
   catch { return []; }
 }
 function savePuzzleFolders() {
   try { localStorage.setItem('cellular-puzzle-folders', JSON.stringify(_puzzleFolders)); } catch {}
+}
+
+// Reset in-memory puzzle state after an external data import
+export function reloadPuzzleData() {
+  _puzzleFolders = loadPuzzleFolders();
+  _activePuzzleFolderId = null;
+  _expandedPuzzleFolders = new Set();
+  _puzzleModalWired = false;   // re-wire button next modal open
 }
 
 // ── Puzzle folder helpers ──────────────────────────────────────────────────────────

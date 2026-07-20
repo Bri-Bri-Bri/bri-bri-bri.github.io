@@ -941,3 +941,44 @@ body.sidebar-open #notebook-area { margin-left: var(--sidebar-w); }
 /* Puzzles modal header: align new-folder btn before close btn */
 #puzzlesModal .modal-header { gap: 0.5rem; }
 #puzzlesModal .modal-header h3 { flex: 1; }
+
+/* ── Import / Restore modal ──────────────────────────────────────────────── */
+.import-meta {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  margin-bottom: 1rem;
+}
+.import-options {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+}
+.import-option {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.25rem 0.55rem;
+  padding: 0.6rem 0.75rem;
+  background: var(--bg-subtle);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background 0.1s;
+}
+.import-option:hover { background: var(--bg-hover); }
+.import-option input[type="checkbox"] { flex-shrink: 0; margin: 0; }
+.import-option-title { flex: 1; font-weight: 500; min-width: 100px; }
+.import-option-count {
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  background: var(--bg-hover);
+  border-radius: 10px;
+  padding: 0.1rem 0.55rem;
+  flex-shrink: 0;
+}
+.import-option-detail {
+  width: 100%;
+  padding-left: calc(0.55rem + 1em);  /* align under title */
+  font-size: 0.78rem;
+  color: var(--text-muted);
+}

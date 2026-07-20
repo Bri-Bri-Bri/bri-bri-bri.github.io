@@ -4,7 +4,7 @@ import {
   mountBoard, navTo, setEditMode, undoLastMove, rebuildPgnWithAnnotations,
   getBoardInstance, destroyBoardInstance, clearAllBoardInstances,
 } from './board.js';
-import { openSavePuzzleDialog } from './puzzles.js';
+import { openSavePuzzleDialog, loadPuzzles, savePuzzles, reloadPuzzleData } from './puzzles.js';
 
 // ── IDs ───────────────────────────────────────────────────────────────────────
 
@@ -146,11 +146,31 @@ function moveFolderToFolder(folderId, targetParentId) {
   renderSidebar();
 }
 
+// ── Study body storage (grouped under one key, in-memory cache) ──────────────
+
+let _studiesCache = null;
+
+function _studiesDb() {
+  if (_studiesCache === null) {
+    try { _studiesCache = JSON.parse(localStorage.getItem('cellular-studies') || '{}'); }
+    catch { _studiesCache = {}; }
+  }
+  return _studiesCache;
+}
+function _flushStudiesDb() {
+  try { localStorage.setItem('cellular-studies', JSON.stringify(_studiesCache)); } catch {}
+}
+
 function loadStudyData(id) {
-  try { return JSON.parse(localStorage.getItem('cellular-study-' + id)); } catch { return null; }
+  return _studiesDb()[id] ?? null;
 }
 function saveStudyData(id, data) {
-  try { localStorage.setItem('cellular-study-' + id, JSON.stringify(data)); } catch {}
+  _studiesDb()[id] = data;
+  _flushStudiesDb();
+}
+function deleteStudyData(id) {
+  delete _studiesDb()[id];
+  _flushStudiesDb();
 }
 
 function scheduleAutoSave() {
@@ -697,7 +717,7 @@ function deleteStudy(id) {
   const idx = state.studiesIndex.findIndex(s => s.id === id);
   if (idx === -1) return;
   state.studiesIndex.splice(idx, 1);
-  try { localStorage.removeItem('cellular-study-' + id); } catch {}
+  deleteStudyData(id);
   saveIndex();
   if (state.studyId === id) {
     // Currently open — switch to nearest entry or create a new one
@@ -711,59 +731,167 @@ function deleteStudy(id) {
   }
 }
 
-// ── Export / Import all data ──────────────────────────────────────────────────
+// ── Backup / Restore ─────────────────────────────────────────────────────────
 
 document.getElementById('exportAllBtn').addEventListener('click', () => {
   saveCurrentStudy();
-  const studies = state.studiesIndex.map(entry => {
-    const data = loadStudyData(entry.id) || { id: entry.id, title: entry.title, cells: [] };
-    return { ...entry, cells: data.cells || [] };
-  });
-  const payload = JSON.stringify({ version: 1, exportedAt: new Date().toISOString(), studies }, null, 2);
-  const filename = 'chess-diary-' + new Date().toISOString().slice(0, 10) + '.json';
-  downloadBlob(payload, 'application/json', filename);
+  const entries = state.studiesIndex.map(e => ({
+    ...e,
+    cells: (loadStudyData(e.id) || { cells: [] }).cells || [],
+  }));
+  let puzzleFoldersRaw = [];
+  try { puzzleFoldersRaw = JSON.parse(localStorage.getItem('cellular-puzzle-folders') || '[]'); } catch {}
+  const payload = {
+    version: 2,
+    exportedAt: new Date().toISOString(),
+    entries,
+    entryFolders: state.folders,
+    puzzles: loadPuzzles(),
+    puzzleFolders: puzzleFoldersRaw,
+    settings: loadSettings(),
+  };
+  const filename = 'cellular-backup-' + new Date().toISOString().slice(0, 10) + '.json';
+  downloadBlob(JSON.stringify(payload, null, 2), 'application/json', filename);
 });
 
 document.getElementById('importFile').addEventListener('change', e => {
   const file = e.target.files[0];
   if (!file) return;
-  e.target.value = '';   // reset so same file can be re-imported
+  e.target.value = '';   // reset so same file can be re-selected
   const reader = new FileReader();
   reader.onload = ev => {
-    let imported;
-    try { imported = JSON.parse(ev.target.result); } catch {
-      alert('Could not parse the file — is it valid JSON?'); return;
+    let data;
+    try { data = JSON.parse(ev.target.result); } catch {
+      alert('Could not parse file — is it valid JSON?'); return;
     }
-    const studies = imported.studies ?? imported;   // accept bare array too
-    if (!Array.isArray(studies) || studies.length === 0) {
-      alert('No diary entries found in the file.'); return;
-    }
-    const newCount = studies.filter(s => !state.studiesIndex.find(e => e.id === s.id)).length;
-    const updCount = studies.filter(s =>  state.studiesIndex.find(e => e.id === s.id)).length;
-    const msg = [
-      `Import ${studies.length} entr${studies.length === 1 ? 'y' : 'ies'}?`,
-      newCount  ? `  • ${newCount} new`     : '',
-      updCount  ? `  • ${updCount} updated` : '',
-    ].filter(Boolean).join('\n');
-    if (!confirm(msg)) return;
-
-    studies.forEach(s => {
-      const { cells, date, updatedAt, title, id } = s;
-      if (!id) return;
-      saveStudyData(id, { id, title: title || 'Imported', cells: cells || [] });
-      const existing = state.studiesIndex.findIndex(e => e.id === id);
-      if (existing !== -1) {
-        state.studiesIndex[existing] = { ...state.studiesIndex[existing], title: title || 'Imported', updatedAt: updatedAt || new Date().toISOString() };
-      } else {
-        state.studiesIndex.push({ id, title: title || 'Imported', date: date || new Date().toISOString(), updatedAt: updatedAt || new Date().toISOString() });
-      }
-    });
-    // Sort newest-first by date
-    state.studiesIndex.sort((a, b) => new Date(b.date) - new Date(a.date));
-    saveIndex();
-    renderSidebar();
+    // Normalise v1 format: { version:1, studies:[...] }
+    if (data.studies && !data.entries) data = { ...data, entries: data.studies };
+    _openImportModal(data);
   };
   reader.readAsText(file);
+});
+
+// ── Import modal ──────────────────────────────────────────────────────────────
+
+const _importModal   = document.getElementById('importModal');
+const _importBody    = document.getElementById('importModalBody');
+const _importConfirm = document.getElementById('importConfirm');
+
+let _pendingImport = null;
+
+function _openImportModal(data) {
+  _pendingImport = data;
+  const entries       = Array.isArray(data.entries)       ? data.entries       : [];
+  const entryFolders  = Array.isArray(data.entryFolders)  ? data.entryFolders  : [];
+  const puzzles       = Array.isArray(data.puzzles)       ? data.puzzles       : [];
+  const puzzleFolders = Array.isArray(data.puzzleFolders) ? data.puzzleFolders : [];
+  const hasSettings   = data.settings && typeof data.settings === 'object';
+
+  const existingEntryIds  = new Set(state.studiesIndex.map(s => s.id));
+  const existingPuzzleIds = new Set(loadPuzzles().map(p => p.id));
+
+  const entriesNew = entries.filter(e => !existingEntryIds.has(e.id)).length;
+  const entriesUpd = entries.filter(e =>  existingEntryIds.has(e.id)).length;
+  const puzzlesNew = puzzles.filter(p => !existingPuzzleIds.has(p.id)).length;
+  const puzzlesUpd = puzzles.filter(p =>  existingPuzzleIds.has(p.id)).length;
+
+  function row(key, title, count, detail) {
+    if (count === 0) return '';
+    return `
+      <label class="import-option">
+        <input type="checkbox" class="import-check" data-key="${key}" checked>
+        <span class="import-option-title">${title}</span>
+        ${count > 1 ? `<span class="import-option-count">${count}</span>` : ''}
+        ${detail ? `<span class="import-option-detail">${detail}</span>` : ''}
+      </label>`;
+  }
+
+  const when = data.exportedAt ? new Date(data.exportedAt).toLocaleString() : 'unknown';
+  _importBody.innerHTML = `
+    <p class="import-meta">Backup from: ${when}</p>
+    <div class="import-options">
+      ${row('entries',       'Diary entries',  entries.length,       (entriesNew || entriesUpd) ? `${entriesNew} new \xB7 ${entriesUpd} will update` : '')}
+      ${row('entryFolders',  'Diary folders',  entryFolders.length,  '')}
+      ${row('puzzles',       'Puzzles',        puzzles.length,       (puzzlesNew || puzzlesUpd) ? `${puzzlesNew} new \xB7 ${puzzlesUpd} will update` : '')}
+      ${row('puzzleFolders', 'Puzzle folders', puzzleFolders.length, '')}
+      ${hasSettings ? row('settings', 'Settings', 1, '') : ''}
+    </div>`;
+
+  _importModal.classList.add('is-open');
+}
+
+function _closeImportModal() {
+  _importModal.classList.remove('is-open');
+  _pendingImport = null;
+}
+
+document.getElementById('importClose').addEventListener('click', _closeImportModal);
+document.getElementById('importCancel').addEventListener('click', _closeImportModal);
+_importModal.addEventListener('click', e => { if (e.target === _importModal) _closeImportModal(); });
+
+_importConfirm.addEventListener('click', () => {
+  if (!_pendingImport) return;
+  const data    = _pendingImport;
+  const checked = key => _importBody.querySelector(`[data-key="${key}"]`)?.checked ?? false;
+
+  if (checked('entryFolders')) {
+    const toImport = Array.isArray(data.entryFolders) ? data.entryFolders : [];
+    const existIds = new Set(state.folders.map(f => f.id));
+    toImport.forEach(f => {
+      if (existIds.has(f.id)) { Object.assign(state.folders.find(x => x.id === f.id), f); }
+      else                    { state.folders.push(f); }
+    });
+    saveFolders();
+  }
+
+  if (checked('entries')) {
+    const toImport = Array.isArray(data.entries) ? data.entries : [];
+    toImport.forEach(s => {
+      const { cells, date, updatedAt, title, id, folderId } = s;
+      if (!id) return;
+      saveStudyData(id, { id, title: title || 'Imported', cells: cells || [] });
+      const idx = state.studiesIndex.findIndex(e => e.id === id);
+      if (idx !== -1) {
+        state.studiesIndex[idx] = { ...state.studiesIndex[idx], title: title || 'Imported', updatedAt: updatedAt || new Date().toISOString(), folderId: folderId ?? null };
+      } else {
+        state.studiesIndex.push({ id, title: title || 'Imported', date: date || new Date().toISOString(), updatedAt: updatedAt || new Date().toISOString(), folderId: folderId ?? null });
+      }
+    });
+    state.studiesIndex.sort((a, b) => new Date(b.date) - new Date(a.date));
+    saveIndex();
+  }
+
+  if (checked('puzzleFolders')) {
+    const toImport = Array.isArray(data.puzzleFolders) ? data.puzzleFolders : [];
+    try {
+      const existing = JSON.parse(localStorage.getItem('cellular-puzzle-folders') || '[]');
+      const existIds = new Set(existing.map(f => f.id));
+      toImport.forEach(f => {
+        if (existIds.has(f.id)) { Object.assign(existing.find(x => x.id === f.id), f); }
+        else                    { existing.push(f); }
+      });
+      localStorage.setItem('cellular-puzzle-folders', JSON.stringify(existing));
+    } catch {}
+  }
+
+  if (checked('puzzles')) {
+    const toImport = Array.isArray(data.puzzles) ? data.puzzles : [];
+    const existing = loadPuzzles();
+    const existIds = new Set(existing.map(p => p.id));
+    toImport.forEach(p => {
+      if (existIds.has(p.id)) { Object.assign(existing.find(x => x.id === p.id), p); }
+      else                    { existing.push(p); }
+    });
+    savePuzzles(existing);
+    reloadPuzzleData();
+  }
+
+  if (checked('settings') && data.settings) {
+    saveSettings(data.settings);
+  }
+
+  _closeImportModal();
+  renderSidebar();
 });
 
 // ── Export ────────────────────────────────────────────────────────────────────
@@ -1223,6 +1351,20 @@ document.getElementById('pgnEditorModal').addEventListener('click', e => {
 (function init() {
   state.studiesIndex = loadIndex();
   state.folders = loadFolders();
+
+  // Migrate per-entry keys (cellular-study-{id}) → grouped storage (cellular-studies)
+  const db = _studiesDb();
+  let needsFlush = false;
+  for (const entry of state.studiesIndex) {
+    if (!db[entry.id]) {
+      const raw = localStorage.getItem('cellular-study-' + entry.id);
+      if (raw) {
+        try { db[entry.id] = JSON.parse(raw); needsFlush = true; } catch {}
+        localStorage.removeItem('cellular-study-' + entry.id);
+      }
+    }
+  }
+  if (needsFlush) _flushStudiesDb();
 
   // Migrate from the original single-notebook localStorage key
   const legacy = localStorage.getItem('cellular-notebook');

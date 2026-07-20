@@ -33,9 +33,9 @@
     </div>
     <div id="sidebar-entries"></div>
     <div id="sidebar-footer">
-      <button id="exportAllBtn" class="btn btn-ghost btn-sm" title="Export all diary entries as JSON">⬇ Export all</button>
-      <label id="importLabel" class="btn btn-ghost btn-sm" title="Import diary entries from JSON">
-        ⬆ Import
+      <button id="exportAllBtn" class="btn btn-ghost btn-sm" title="Export full backup (entries, puzzles, folders &amp; settings) as JSON">⬇ Backup</button>
+      <label id="importLabel" class="btn btn-ghost btn-sm" title="Restore from a backup JSON file">
+        ⬆ Restore
         <input type="file" id="importFile" accept=".json" style="display:none">
       </label>
     </div>
@@ -205,6 +205,23 @@
             <button class="btn btn-ghost" id="puzzleReset">↺ Reset</button>
           </div>
         </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Import / Restore modal -->
+  <div id="importModal" class="modal-overlay" role="dialog" aria-modal="true" aria-label="Import backup">
+    <div class="modal-box">
+      <div class="modal-header">
+        <h3>Restore from backup</h3>
+        <button class="btn-icon" id="importClose" title="Close">✕</button>
+      </div>
+      <div class="modal-body" id="importModalBody">
+        <!-- populated by JS -->
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" id="importCancel">Cancel</button>
+        <button class="btn btn-primary" id="importConfirm">Import selected</button>
       </div>
     </div>
   </div>
