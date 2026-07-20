@@ -464,6 +464,7 @@ function _renderPuzzleFolderLevel(parentEl, parentFolderId, depth, allPuzzles) {
 
 
 function _buildPGN(puzzle_data) {
+  var steps = puzzle_data['solution'];
   var pgn_template = `
   [Event "?"]
   [Site "?"]
@@ -476,8 +477,8 @@ function _buildPGN(puzzle_data) {
   [FEN "${puzzle_data['fen']}"]
 
 `+
-  Array.from({ length:  puzzle_data['solution'].length/2}, (_, i) => String(`${i}. ${puzzle_data['solution'][i]} ${puzzle_data['solution'][i+1]}`)).join("\n");
-  return pgn_template;
+  Array.from({ length:  Math.ceil(steps.length/2) }, (_, i) => String(`${i+1}. ${steps[i*2]} ${steps[i*2+1]}`)).join("\n");
+  return pgn_template.replaceAll('undefined', '');
 }
 
 function _buildPuzzleRow(puzzle) {
