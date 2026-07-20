@@ -448,6 +448,38 @@ function _renderPuzzleFolderLevel(parentEl, parentFolderId, depth, allPuzzles) {
   });
 }
 
+  const _clipboard_toast = (msg, ms=1400) => {
+    const t = Object.assign(document.createElement('div'), {
+      textContent: msg,
+      style: `
+        position:fixed;left:50%;bottom:18px;transform:translateX(-50%);
+        background:#111;color:#fff;padding:8px 12px;border-radius:999px;
+        font:13px/1.2 system-ui;z-index:99999;opacity:.95;
+      `
+    });
+    document.body.appendChild(t);
+    setTimeout(()=>{ t.style.opacity='0'; t.style.transition='opacity 200ms ease'; }, ms);
+    setTimeout(()=> t.remove(), ms+250);
+  };
+
+
+function _buildPGN(puzzle_data) {
+  var pgn_template = `
+  [Event "?"]
+  [Site "?"]
+  [Date "????.??.??"]
+  [Round "?"]
+  [White "?"]
+  [Black "?"]
+  [Result "*"]
+  [SetUp "1"]
+  [FEN "${puzzle_data['fen']}"]
+
+`+
+  Array.from({ length:  puzzle_data['solution'].length/2}, (_, i) => String(`${i}. ${puzzle_data['solution'][i]} ${puzzle_data['solution'][i+1]}`)).join("\n");
+  return pgn_template;
+}
+
 function _buildPuzzleRow(puzzle) {
   const row  = document.createElement('div');
   row.className = 'puzzle-list-row';
@@ -460,9 +492,16 @@ function _buildPuzzleRow(puzzle) {
       <span class="puzzle-list-meta">${mc} move${mc !== 1 ? 's' : ''}${puzzle.fromStudy ? ' \u00b7 ' + escapeHtml(puzzle.fromStudy) : ''} \u00b7 ${date}</span>
     </div>
     <div class="puzzle-list-actions">
+      <button data-id="mrtnopxjwr2bp" class="btn btn-secondary puzzle-copy-btn" data-id="${escapeAttr(puzzle.id)}">⿻ Copy PGN</button>
       <button class="btn btn-primary puzzle-practice-btn" data-id="${escapeAttr(puzzle.id)}">\u25ba Practice</button>
       <button class="btn-icon danger puzzle-delete-btn" data-id="${escapeAttr(puzzle.id)}" title="Delete">\u2715</button>
     </div>`;
+  row.querySelector('.puzzle-copy-btn').addEventListener('click', () => {
+    // Build and dump PGN to clipboard, and show small alert to user
+    const pgn = _buildPGN(puzzle);
+    navigator.clipboard.writeText(pgn);
+    _clipboard_toast('PGN copied to clipboard');
+  });
   row.querySelector('.puzzle-practice-btn').addEventListener('click', () => {
     document.getElementById('puzzlesModal').classList.remove('is-open');
     openPuzzlePractice(puzzle.id);
