@@ -1,7 +1,7 @@
 // CACHE_VERSION is bumped automatically on every commit by the pre-commit hook.
 // The 'pomodoro-' prefix scopes purges to this project only — Cache Storage
 // is origin-wide, so other sub-projects on the same origin are left untouched.
-const CACHE_VERSION = 'pomodoro-v20260722144434';
+const CACHE_VERSION = 'pomodoro-v20260722231007';
 
 const PRECACHE = [
   './',
