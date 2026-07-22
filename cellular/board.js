@@ -3,6 +3,7 @@ import { Chessground } from 'https://esm.sh/@lichess-org/chessground?bundle';
 import { state, boardInstances } from './state.js';
 // Circular imports from editor.js — safe: all are export function declarations (hoisted)
 import { getCell, updateCellData, escapeHtml, escapeAttr } from './editor.js';
+import { ECO_NAMES } from './eco.js';
 
 // ── Chessground helpers ───────────────────────────────────────────────────────
 
@@ -218,7 +219,16 @@ function _updateGameHeader(cellId) {
   header.querySelector('.gh-result').textContent  = h.Result  || '';
   header.querySelector('.gh-date').textContent    =
     (h.Date || '').replace(/\.\?\?/g, '').replace(/^(\d{4})\.(\d{2})\.(\d{2})$/, '$2/$3/$1');
-  header.querySelector('.gh-opening').textContent = h.Opening || h.ECO || '';
+  const openingEl = header.querySelector('.gh-opening');
+  const eco  = h.ECO || '';
+  const name = h.Opening || (eco ? ECO_NAMES[eco] : '') || eco;
+  openingEl.textContent = name;
+  if (eco) {
+    openingEl.href = `https://www.chess365.com/ECO/${eco}`;
+    openingEl.removeAttribute('hidden');
+  } else {
+    openingEl.removeAttribute('href');
+  }
 }
 
 // ── Board: nav button state ───────────────────────────────────────────────────

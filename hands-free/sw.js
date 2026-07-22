@@ -11,7 +11,7 @@
 // The 'hands-free-' prefix scopes purges to this project only — Cache Storage
 // is origin-wide, so other sub-projects on the same origin are left untouched.
 
-const CACHE_VERSION = 'hands-free-v20260721184601';
+const CACHE_VERSION = 'hands-free-v20260722023149';
 
 const APP_SHELL = [
   './',

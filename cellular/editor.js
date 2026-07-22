@@ -289,12 +289,13 @@ function buildBoardCell(cell) {
       </div>
       <div class="gh-meta">
         <span class="gh-date"></span>
-        <span class="gh-opening"></span>
+        <a class="gh-opening" target="_blank" rel="noopener noreferrer"></a>
       </div>
     </div>
     <div class="cell-body">
       <div class="board-viewer-wrap"></div>
       <div class="annotation-panel">
+        <button class="annotation-toggle-btn" aria-label="Toggle move list">▼ Moves</button>
         <div class="annotation-nav">
           <button class="btn-icon nav-first" title="First move">\u23ee</button>
           <button class="btn-icon nav-prev"  title="Previous move">\u25c4</button>
@@ -338,6 +339,19 @@ function buildBoardCell(cell) {
   //div.querySelector('.export-board').addEventListener('click', () => exportBoard(cell.id));
   div.querySelector('.pgn-editor-btn').addEventListener('click', () => openPgnEditor(cell.id));
   div.querySelector('.save-puzzle-btn').addEventListener('click', () => openSavePuzzleDialog(cell.id));
+
+  // Annotation panel collapse toggle (visible on mobile)
+  const _toggleBtn  = div.querySelector('.annotation-toggle-btn');
+  const _annotPanel = div.querySelector('.annotation-panel');
+  _toggleBtn.addEventListener('click', () => {
+    const collapsed = _annotPanel.classList.toggle('collapsed');
+    _toggleBtn.textContent = collapsed ? '\u25ba Moves' : '\u25bc Moves';
+  });
+  // Default to collapsed on narrow screens
+  if (window.innerWidth <= 640) {
+    _annotPanel.classList.add('collapsed');
+    _toggleBtn.textContent = '\u25ba Moves';
+  }
 
   // Move navigation
   div.querySelector('.nav-first').addEventListener('click', () => navTo(cell.id, 0));

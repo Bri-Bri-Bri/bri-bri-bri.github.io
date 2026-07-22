@@ -982,3 +982,20 @@ body.sidebar-open #notebook-area { margin-left: var(--sidebar-w); }
   font-size: 0.78rem;
   color: var(--text-muted);
 }
+
+/*
+Source - https://stackoverflow.com/a/61336200
+Retrieved 2026-07-21, License - CC BY-SA 4.0
+*/
+
+@media screen and (max-width: 480px) {
+  .show-on-desktop {
+    display: none;
+  }
+}
+
+@media screen and (min-width: 481px) {
+  .hide-on-desktop {
+    display: none;
+  }
+}

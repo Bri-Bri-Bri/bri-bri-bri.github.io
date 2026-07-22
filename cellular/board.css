@@ -126,7 +126,27 @@
 .gh-vs { color: var(--text-faint); font-size: 0.72rem; }
 .gh-result { font-weight: 600; color: var(--text-muted); margin-left: 0.15rem; }
 .gh-meta { display: flex; gap: 0.4rem; align-items: center; color: var(--text-muted); font-size: 0.75rem; }
-.gh-opening { font-style: italic; max-width: 22ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.gh-opening { font-style: italic; max-width: 22ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--accent); text-decoration: none; }
+.gh-opening:hover { text-decoration: underline; }
+
+/* Annotation panel collapse toggle — shown only on mobile */
+.annotation-toggle-btn {
+  display: none;
+  width: 100%;
+  padding: 0.35rem 0.75rem;
+  border: none;
+  background: var(--bg-subtle);
+  color: var(--text-muted);
+  font-size: 0.78rem;
+  font-weight: 500;
+  text-align: left;
+  cursor: pointer;
+  border-bottom: 1px solid var(--border);
+  font-family: var(--font);
+}
+.annotation-toggle-btn:hover { background: var(--bg-hover); }
+.annotation-panel.collapsed .annotation-nav,
+.annotation-panel.collapsed .annotation-list { display: none; }
 
 /* ── Annotation nav bar ─────────────────────────────────────── */
 .annotation-nav {
@@ -186,5 +206,7 @@
   .cell-board .board-viewer-wrap { flex: 0 0 100% !important; max-width: 100% !important; width: 100% !important; }
   .cell-board .cell-body { flex-direction: column; }
   .annotation-panel { max-height: 260px; border-left: none; border-top: 1px solid var(--border); }
+  .annotation-panel.collapsed { max-height: none; }
+  .annotation-toggle-btn { display: block; }
   .board-title-input { max-width: 140px; }
 }
