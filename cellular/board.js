@@ -224,7 +224,7 @@ function _updateGameHeader(cellId) {
   const name = h.Opening || (eco ? ECO_NAMES[eco] : '') || eco;
   openingEl.textContent = name;
   if (eco) {
-    openingEl.href = `https://www.chess365.com/ECO/${eco}`;
+    openingEl.href = `https://www.365chess.com/eco/${eco}`;
     openingEl.removeAttribute('hidden');
   } else {
     openingEl.removeAttribute('href');
